@@ -1,0 +1,237 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  BLOCKED
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  REFUNDED
+}
+
+enum PaymentMethod {
+  STRIPE
+  PICKUP
+}
+
+enum Fulfillment {
+  DELIVERY
+  PICKUP
+}
+
+model User {
+  id                String     @id @default(uuid())
+  email             String     @unique
+  passwordHash      String
+  name              String
+  company           String?
+  phone             String?
+  researchFramework String?
+  role              Role       @default(USER)
+  status            UserStatus @default(PENDING)
+  lastLoginAt       DateTime?
+  deletedAt         DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  addresses   Address[]
+  orders      Order[]
+  resetTokens PasswordResetToken[]
+  orderEvents OrderEvent[]
+
+  @@index([status])
+  @@index([role])
+}
+
+model Address {
+  id        String   @id @default(uuid())
+  userId    String
+  label     String?
+  line1     String
+  line2     String?
+  city      String
+  state     String
+  zip       String
+  country   String   @default("US")
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  name        String
+  category    String   @default("Peptides")
+  summary     String   @default("")
+  description String   @default("")
+  purity      String   @default("")
+  form        String   @default("Lyophilized")
+  image       String   @default("")
+  highlights  String[] @default([])
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  variants Variant[]
+
+  @@index([isActive])
+  @@index([category])
+}
+
+model Variant {
+  id         String   @id @default(uuid())
+  productId  String
+  dose       String
+  priceCents Int
+  sku        String   @unique
+  image      String   @default("")
+  stock      Int      @default(0)
+  // Parcel data drives EasyPost rating; ounces and inches.
+  weightOz   Float    @default(2)
+  lengthIn   Float    @default(6)
+  widthIn    Float    @default(4)
+  heightIn   Float    @default(2)
+  isActive   Boolean  @default(true)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@index([productId])
+}
+
+model Order {
+  id          String        @id @default(uuid())
+  orderNumber String        @unique
+  userId      String?
+  status      OrderStatus   @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID)
+  paymentMethod PaymentMethod
+  fulfillment Fulfillment
+
+  subtotalCents Int
+  shippingCents Int    @default(0)
+  totalCents    Int
+  currency      String @default("usd")
+
+  // Contact + address snapshot, kept even if the customer edits their profile.
+  contactName  String
+  contactEmail String
+  contactPhone String
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  zip          String?
+  country      String? @default("US")
+  notes        String?
+
+  stripePaymentIntentId String?
+  easypostShipmentId    String?
+  easypostRateId        String?
+  carrier               String?
+  service               String?
+  trackingCode          String?
+  trackingUrl           String?
+  labelUrl              String?
+  shippedAt             DateTime?
+  paidAt                DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items  OrderItem[]
+  events OrderEvent[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  variantId String?
+
+  // Snapshot so historical orders survive product edits and deletions.
+  productName String
+  dose        String
+  sku         String
+  image       String  @default("")
+  unitPriceCents Int
+  qty         Int
+  weightOz    Float   @default(2)
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant Variant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+model OrderEvent {
+  id        String   @id @default(uuid())
+  orderId   String
+  actorId   String?
+  type      String
+  message   String
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+/// Single-row key/value store for admin-configurable site settings.
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
