@@ -213,6 +213,27 @@ router.post('/:id/label/retry', async (req, res) => {
   }
 })
 
+/** Streams the purchased EasyPost label so admins can download it as a file. */
+router.get('/:id/label/download', async (req, res) => {
+  const order = await prisma.order.findUnique({ where: { id: req.params.id } })
+  if (!order) throw notFound('Order not found.')
+  if (!order.labelUrl) throw badRequest('This order does not have a shipping label yet.')
+
+  const upstream = await fetch(order.labelUrl)
+  if (!upstream.ok) {
+    throw badRequest('Could not fetch the shipping label from the carrier.')
+  }
+
+  const contentType = upstream.headers.get('content-type') || 'application/pdf'
+  const buffer = Buffer.from(await upstream.arrayBuffer())
+  const filename = `shipping-label-${order.orderNumber}.pdf`
+
+  res.setHeader('Content-Type', contentType)
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+  res.setHeader('Content-Length', buffer.length)
+  res.send(buffer)
+})
+
 router.patch('/:id/payment', validate(paymentSchema), async (req, res) => {
   const { paymentStatus } = req.body
 
