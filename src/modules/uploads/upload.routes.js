@@ -46,8 +46,8 @@ const documentUpload = multer({
   storage,
   limits: { fileSize: env.maxUploadBytes, files: 1 },
   fileFilter(req, file, cb) {
-    if (file.mimetype !== 'application/pdf') {
-      return cb(badRequest('Only PDF documents are allowed.'))
+    if (!ALLOWED.has(file.mimetype)) {
+      return cb(badRequest('Upload a PDF or an image (JPG, PNG, WEBP, AVIF, GIF).'))
     }
     cb(null, true)
   },
@@ -58,12 +58,12 @@ router.post('/document', requireAdmin, (req, res, next) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return next(
-          badRequest(`PDF must be smaller than ${env.maxUploadBytes / 1024 / 1024}MB.`),
+          badRequest(`File must be smaller than ${env.maxUploadBytes / 1024 / 1024}MB.`),
         )
       }
       return next(err)
     }
-    if (!req.file) return next(badRequest('No PDF was uploaded.'))
+    if (!req.file) return next(badRequest('No file was uploaded.'))
 
     const relative = `/uploads/${path.basename(req.file.filename)}`
     res.status(201).json({ url: relative, absoluteUrl: `${env.apiUrl}${relative}` })
