@@ -55,7 +55,7 @@ export const env = {
   easypost: {
     // The test key keeps development from buying real postage.
     apiKey: isProd
-      ? process.env.EASYPOST_API_KEY || ''
+      ? process.env.EASYPOST_API_KEY || process.env.EASYPOST_TEST_API_KEY || ''
       : process.env.EASYPOST_TEST_API_KEY || process.env.EASYPOST_API_KEY || '',
     baseUrl: process.env.EASYPOST_BASE_URL || '',
   },

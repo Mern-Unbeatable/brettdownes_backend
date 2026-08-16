@@ -6,6 +6,7 @@ import { requireAuth } from '../../middleware/auth.js'
 import { validate } from '../../middleware/validate.js'
 import { env } from '../../lib/env.js'
 import { getStripe, sanitizeDescriptor } from '../../lib/stripe.js'
+import { buyLabel } from '../../lib/easypost.js'
 import { sendMail } from '../../lib/mailer.js'
 import { templates } from '../../lib/email-templates.js'
 import { getAdminRecipients, getSettings } from '../settings/settings.service.js'
@@ -18,12 +19,64 @@ const sessionSchema = z.object({
   sessionId: z.string().min(1),
 })
 
+/**
+ * Buys the exact rate selected at checkout after payment succeeds. A carrier
+ * failure must never undo a successful payment; admins can retry from the order.
+ */
+async function buyPaidOrderLabel(order) {
+  if (
+    order.fulfillment !== 'DELIVERY' ||
+    order.labelUrl ||
+    !order.easypostShipmentId ||
+    !order.easypostRateId
+  ) {
+    return order
+  }
+
+  try {
+    const label = await buyLabel({
+      shipmentId: order.easypostShipmentId,
+      rateId: order.easypostRateId,
+    })
+
+    return await prisma.order.update({
+      where: { id: order.id },
+      data: {
+        labelUrl: label.labelUrl,
+        trackingCode: label.trackingCode,
+        trackingUrl: label.trackingUrl,
+        carrier: label.carrier,
+        service: label.service,
+        events: {
+          create: {
+            type: 'LABEL',
+            message: `${label.carrier} ${label.service} label purchased automatically${
+              label.trackingCode ? ` (tracking ${label.trackingCode})` : ''
+            }.`,
+          },
+        },
+      },
+      include: ORDER_INCLUDE,
+    })
+  } catch (error) {
+    console.error(`[shipping] Automatic label purchase failed for order ${order.orderNumber}:`, error)
+    await prisma.orderEvent.create({
+      data: {
+        orderId: order.id,
+        type: 'LABEL_FAILED',
+        message: `Automatic label purchase failed: ${error.message || 'Unknown carrier error'}`,
+      },
+    })
+    return order
+  }
+}
+
 /** Marks an order paid exactly once and fires the confirmation emails. */
 async function markOrderPaid(orderId, { paymentIntentId } = {}) {
   const existing = await prisma.order.findUnique({ where: { id: orderId } })
   if (!existing || existing.paymentStatus === 'PAID') return null
 
-  const order = await prisma.order.update({
+  let order = await prisma.order.update({
     where: { id: orderId },
     data: {
       paymentStatus: 'PAID',
@@ -36,6 +89,8 @@ async function markOrderPaid(orderId, { paymentIntentId } = {}) {
     },
     include: ORDER_INCLUDE,
   })
+
+  order = await buyPaidOrderLabel(order)
 
   if (order.couponCode) {
     await prisma.coupon.updateMany({

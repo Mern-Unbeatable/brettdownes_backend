@@ -6,8 +6,6 @@ import { requireAdmin } from '../../middleware/auth.js'
 import { validate } from '../../middleware/validate.js'
 import { sendMail } from '../../lib/mailer.js'
 import { templates } from '../../lib/email-templates.js'
-import { buildParcel, buyLabel, createShipmentWithRates, refreshRates } from '../../lib/easypost.js'
-import { getSettings } from '../settings/settings.service.js'
 import { ORDER_INCLUDE, serializeOrder } from './order.serializer.js'
 
 const listQuerySchema = z.object({
@@ -27,10 +25,6 @@ const statusSchema = z.object({
 
 const paymentSchema = z.object({
   paymentStatus: z.enum(['UNPAID', 'PAID', 'REFUNDED']),
-})
-
-const labelSchema = z.object({
-  rateId: z.string().trim().min(1).optional(),
 })
 
 const router = Router()
@@ -210,96 +204,6 @@ router.patch('/:id/payment', validate(paymentSchema), async (req, res) => {
   })
 
   res.json({ order: serializeOrder(order) })
-})
-
-/** Re-quotes a delivery order so an expired rate can be replaced. */
-router.post('/:id/rates', async (req, res) => {
-  const order = await prisma.order.findUnique({
-    where: { id: req.params.id },
-    include: { items: true },
-  })
-  if (!order) throw notFound('Order not found.')
-  if (order.fulfillment !== 'DELIVERY') throw badRequest('Pickup orders do not need a label.')
-  if (!order.addressLine1) throw badRequest('This order has no delivery address.')
-
-  const settings = await getSettings()
-  const parcel = buildParcel(order.items)
-
-  const { shipmentId, rates } = await createShipmentWithRates({
-    toAddress: {
-      name: order.contactName,
-      street1: order.addressLine1,
-      street2: order.addressLine2 || undefined,
-      city: order.city,
-      state: order.state,
-      zip: order.zip,
-      country: order.country || 'US',
-      phone: order.contactPhone,
-      email: order.contactEmail,
-    },
-    fromAddress: settings.shipFrom,
-    parcel,
-  })
-
-  await prisma.order.update({
-    where: { id: order.id },
-    data: { easypostShipmentId: shipmentId },
-  })
-
-  res.json({ shipmentId, rates })
-})
-
-router.post('/:id/label', validate(labelSchema), async (req, res) => {
-  const order = await prisma.order.findUnique({ where: { id: req.params.id } })
-  if (!order) throw notFound('Order not found.')
-  if (order.labelUrl) throw badRequest('A label has already been purchased for this order.')
-  if (order.fulfillment !== 'DELIVERY') throw badRequest('Pickup orders do not need a label.')
-  if (!order.easypostShipmentId) {
-    throw badRequest('This order has no shipment quote yet. Re-quote the rates first.')
-  }
-
-  const rateId = req.body.rateId || order.easypostRateId
-  if (!rateId) throw badRequest('Choose a shipping rate before buying the label.')
-
-  const label = await buyLabel({ shipmentId: order.easypostShipmentId, rateId })
-
-  const updated = await prisma.order.update({
-    where: { id: order.id },
-    data: {
-      labelUrl: label.labelUrl,
-      trackingCode: label.trackingCode,
-      trackingUrl: label.trackingUrl,
-      carrier: label.carrier,
-      service: label.service,
-      easypostRateId: rateId,
-      status: 'SHIPPED',
-      shippedAt: new Date(),
-      events: {
-        create: {
-          actorId: req.user.id,
-          type: 'LABEL',
-          message: `${label.carrier} ${label.service} label purchased${
-            label.trackingCode ? ` (tracking ${label.trackingCode})` : ''
-          }.`,
-        },
-      },
-    },
-    include: ORDER_INCLUDE,
-  })
-
-  sendMail({ to: updated.contactEmail, ...templates.orderShipped(updated) })
-
-  res.json({ order: serializeOrder(updated) })
-})
-
-/** Refreshes stored rates without creating a new shipment. */
-router.get('/:id/rates', async (req, res) => {
-  const order = await prisma.order.findUnique({ where: { id: req.params.id } })
-  if (!order) throw notFound('Order not found.')
-  if (!order.easypostShipmentId) throw badRequest('This order has no shipment quote yet.')
-
-  const result = await refreshRates(order.easypostShipmentId)
-  res.json(result)
 })
 
 export default router
