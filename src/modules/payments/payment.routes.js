@@ -6,11 +6,11 @@ import { requireAuth } from '../../middleware/auth.js'
 import { validate } from '../../middleware/validate.js'
 import { env } from '../../lib/env.js'
 import { getStripe, sanitizeDescriptor } from '../../lib/stripe.js'
-import { buyLabel } from '../../lib/easypost.js'
 import { sendMail } from '../../lib/mailer.js'
 import { templates } from '../../lib/email-templates.js'
 import { getAdminRecipients, getSettings } from '../settings/settings.service.js'
 import { removePurchasedCartItems } from '../cart/cart.service.js'
+import { purchaseOrderLabel } from '../orders/label.service.js'
 import { ORDER_INCLUDE, serializeOrder } from '../orders/order.serializer.js'
 
 const orderIdSchema = z.object({ orderId: z.string().min(1) })
@@ -24,40 +24,12 @@ const sessionSchema = z.object({
  * failure must never undo a successful payment; admins can retry from the order.
  */
 async function buyPaidOrderLabel(order) {
-  if (
-    order.fulfillment !== 'DELIVERY' ||
-    order.labelUrl ||
-    !order.easypostShipmentId ||
-    !order.easypostRateId
-  ) {
+  if (order.fulfillment !== 'DELIVERY' || order.labelUrl) {
     return order
   }
 
   try {
-    const label = await buyLabel({
-      shipmentId: order.easypostShipmentId,
-      rateId: order.easypostRateId,
-    })
-
-    return await prisma.order.update({
-      where: { id: order.id },
-      data: {
-        labelUrl: label.labelUrl,
-        trackingCode: label.trackingCode,
-        trackingUrl: label.trackingUrl,
-        carrier: label.carrier,
-        service: label.service,
-        events: {
-          create: {
-            type: 'LABEL',
-            message: `${label.carrier} ${label.service} label purchased automatically${
-              label.trackingCode ? ` (tracking ${label.trackingCode})` : ''
-            }.`,
-          },
-        },
-      },
-      include: ORDER_INCLUDE,
-    })
+    return await purchaseOrderLabel(order)
   } catch (error) {
     console.error(`[shipping] Automatic label purchase failed for order ${order.orderNumber}:`, error)
     await prisma.orderEvent.create({

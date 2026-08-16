@@ -6,6 +6,7 @@ import { requireAdmin } from '../../middleware/auth.js'
 import { validate } from '../../middleware/validate.js'
 import { sendMail } from '../../lib/mailer.js'
 import { templates } from '../../lib/email-templates.js'
+import { purchaseOrderLabel } from './label.service.js'
 import { ORDER_INCLUDE, serializeOrder } from './order.serializer.js'
 
 const listQuerySchema = z.object({
@@ -152,6 +153,17 @@ router.patch('/:id/status', validate(statusSchema), async (req, res) => {
   const existing = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!existing) throw notFound('Order not found.')
 
+  // Delivery + Stripe: Processing/Shipped are driven by payment + EasyPost label.
+  // Admin may only mark delivered / cancel / refund.
+  if (existing.fulfillment === 'DELIVERY' && existing.paymentMethod === 'STRIPE') {
+    const allowed = new Set(['DELIVERED', 'CANCELLED', 'REFUNDED'])
+    if (!allowed.has(status)) {
+      throw badRequest(
+        'Delivery order status updates automatically (Processing after payment, Shipped when the label is bought). You can only mark Delivered, Cancelled, or Refunded here.',
+      )
+    }
+  }
+
   const order = await prisma.order.update({
     where: { id: existing.id },
     data: {
@@ -175,6 +187,30 @@ router.patch('/:id/status', validate(statusSchema), async (req, res) => {
   }
 
   res.json({ order: serializeOrder(order) })
+})
+
+/** Retries the automatic label purchase using the customer's selected service. */
+router.post('/:id/label/retry', async (req, res) => {
+  const existing = await prisma.order.findUnique({
+    where: { id: req.params.id },
+    include: { items: true },
+  })
+  if (!existing) throw notFound('Order not found.')
+
+  try {
+    const order = await purchaseOrderLabel(existing, { actorId: req.user.id })
+    res.json({ order: serializeOrder(order) })
+  } catch (error) {
+    await prisma.orderEvent.create({
+      data: {
+        orderId: existing.id,
+        actorId: req.user.id,
+        type: 'LABEL_FAILED',
+        message: `Label retry failed: ${error.message || 'Unknown carrier error'}`,
+      },
+    })
+    throw error
+  }
 })
 
 router.patch('/:id/payment', validate(paymentSchema), async (req, res) => {
