@@ -223,10 +223,7 @@ router.post('/:id/rates', async (req, res) => {
   if (!order.addressLine1) throw badRequest('This order has no delivery address.')
 
   const settings = await getSettings()
-  const parcel = buildParcel(
-    order.items.map((item) => ({ weightOz: item.weightOz, qty: item.qty })),
-    settings.defaultParcel,
-  )
+  const parcel = buildParcel(order.items)
 
   const { shipmentId, rates } = await createShipmentWithRates({
     toAddress: {

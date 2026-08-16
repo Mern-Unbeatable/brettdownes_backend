@@ -29,9 +29,13 @@ export function serializeOrder(order) {
     fulfillment: order.fulfillment,
 
     subtotalCents: order.subtotalCents,
+    discountCents: order.discountCents || 0,
+    discountLabel: order.discountLabel || null,
+    couponCode: order.couponCode || null,
     shippingCents: order.shippingCents,
     totalCents: order.totalCents,
     subtotal: toDollars(order.subtotalCents),
+    discount: toDollars(order.discountCents || 0),
     shipping: toDollars(order.shippingCents),
     total: toDollars(order.totalCents),
     currency: order.currency,

@@ -10,6 +10,7 @@ import { attachUser } from './middleware/auth.js'
 import { errorHandler, notFoundHandler } from './middleware/error.js'
 
 import authRoutes from './modules/auth/auth.routes.js'
+import cartRoutes from './modules/cart/cart.routes.js'
 import productRoutes from './modules/products/product.routes.js'
 import orderRoutes from './modules/orders/order.routes.js'
 import adminOrderRoutes from './modules/orders/admin-order.routes.js'
@@ -18,6 +19,8 @@ import settingsRoutes from './modules/settings/settings.routes.js'
 import shippingRoutes from './modules/shipping/shipping.routes.js'
 import paymentRoutes from './modules/payments/payment.routes.js'
 import uploadRoutes from './modules/uploads/upload.routes.js'
+import discountRoutes from './modules/discounts/discount.routes.js'
+import coaRoutes from './modules/coa/coa.routes.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 export const uploadsDir = path.resolve(here, '..', 'uploads')
@@ -53,6 +56,7 @@ export function createApp() {
   })
 
   app.use('/api/auth', authRoutes)
+  app.use('/api/cart', cartRoutes)
   app.use('/api/products', productRoutes)
   app.use('/api/orders', orderRoutes)
   app.use('/api/admin/orders', adminOrderRoutes)
@@ -61,6 +65,8 @@ export function createApp() {
   app.use('/api/shipping', shippingRoutes)
   app.use('/api/payments', paymentRoutes)
   app.use('/api/uploads', uploadRoutes)
+  app.use('/api/discounts', discountRoutes)
+  app.use('/api/coa', coaRoutes)
 
   app.use(notFoundHandler)
   app.use(errorHandler)

@@ -55,6 +55,7 @@ function itemsTable(items) {
 function totals(order) {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e5e7eb;padding-top:8px;">
     <tr><td style="padding:6px 0;font-size:13px;color:${BRAND.muted};">Subtotal</td><td style="padding:6px 0;font-size:13px;text-align:right;">${formatMoney(order.subtotalCents)}</td></tr>
+    ${order.discountCents > 0 ? `<tr><td style="padding:6px 0;font-size:13px;color:${BRAND.muted};">Bulk reward${order.discountLabel ? ` (${order.discountLabel})` : ''}</td><td style="padding:6px 0;font-size:13px;text-align:right;color:#059669;">-${formatMoney(order.discountCents)}</td></tr>` : ''}
     <tr><td style="padding:6px 0;font-size:13px;color:${BRAND.muted};">${order.fulfillment === 'PICKUP' ? 'Pickup' : 'Shipping'}</td><td style="padding:6px 0;font-size:13px;text-align:right;">${order.fulfillment === 'PICKUP' ? 'Free' : formatMoney(order.shippingCents)}</td></tr>
     <tr><td style="padding:6px 0;font-size:15px;font-weight:700;">Total</td><td style="padding:6px 0;font-size:15px;font-weight:700;text-align:right;">${formatMoney(order.totalCents)}</td></tr>
   </table>`

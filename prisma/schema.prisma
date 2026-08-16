@@ -59,6 +59,7 @@ model User {
   updatedAt         DateTime   @updatedAt
 
   addresses   Address[]
+  cartItems   CartItem[]
   orders      Order[]
   resetTokens PasswordResetToken[]
   orderEvents OrderEvent[]
@@ -103,9 +104,28 @@ model Product {
   updatedAt   DateTime @updatedAt
 
   variants Variant[]
+  couponProducts CouponProduct[]
+  coaDocuments CoaDocument[]
 
   @@index([isActive])
   @@index([category])
+}
+
+model CoaDocument {
+  id          String   @id @default(uuid())
+  productId   String
+  name        String
+  content     String   @default("")
+  documentUrl String   @default("")
+  isPublished Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@index([isPublished])
 }
 
 model Variant {
@@ -127,9 +147,25 @@ model Variant {
   updatedAt  DateTime @updatedAt
 
   product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems  CartItem[]
   orderItems OrderItem[]
 
   @@index([productId])
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  userId    String
+  variantId String
+  qty       Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  variant Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, variantId])
+  @@index([userId])
 }
 
 model Order {
@@ -142,6 +178,9 @@ model Order {
   fulfillment Fulfillment
 
   subtotalCents Int
+  discountCents Int    @default(0)
+  discountLabel String?
+  couponCode    String?
   shippingCents Int    @default(0)
   totalCents    Int
   currency      String @default("usd")
@@ -180,6 +219,51 @@ model Order {
   @@index([status])
   @@index([paymentStatus])
   @@index([createdAt])
+}
+
+model DiscountTier {
+  id               String   @id @default(uuid())
+  name             String
+  enabled          Boolean  @default(true)
+  scope            String   @default("ORDER")
+  percent          Int
+  minSubtotalCents Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([enabled])
+}
+
+model Coupon {
+  id               String   @id @default(uuid())
+  code             String   @unique
+  description      String   @default("")
+  enabled          Boolean  @default(true)
+  discountType     String   @default("PERCENT")
+  discountValue    Int
+  appliesTo        String   @default("ALL")
+  minSubtotalCents Int      @default(0)
+  usageLimit       Int?
+  usageCount       Int      @default(0)
+  startsAt         DateTime?
+  expiresAt        DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  products CouponProduct[]
+
+  @@index([enabled])
+}
+
+model CouponProduct {
+  couponId  String
+  productId String
+
+  coupon  Coupon  @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, productId])
+  @@index([productId])
 }
 
 model OrderItem {

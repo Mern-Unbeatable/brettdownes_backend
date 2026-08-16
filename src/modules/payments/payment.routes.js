@@ -9,6 +9,7 @@ import { getStripe, sanitizeDescriptor } from '../../lib/stripe.js'
 import { sendMail } from '../../lib/mailer.js'
 import { templates } from '../../lib/email-templates.js'
 import { getAdminRecipients, getSettings } from '../settings/settings.service.js'
+import { removePurchasedCartItems } from '../cart/cart.service.js'
 import { ORDER_INCLUDE, serializeOrder } from '../orders/order.serializer.js'
 
 const orderIdSchema = z.object({ orderId: z.string().min(1) })
@@ -35,6 +36,18 @@ async function markOrderPaid(orderId, { paymentIntentId } = {}) {
     },
     include: ORDER_INCLUDE,
   })
+
+  if (order.couponCode) {
+    await prisma.coupon.updateMany({
+      where: { code: order.couponCode },
+      data: { usageCount: { increment: 1 } },
+    })
+  }
+
+  await removePurchasedCartItems(
+    order.userId,
+    order.items.map((item) => item.variantId),
+  )
 
   const settings = await getSettings()
   sendMail({ to: order.contactEmail, ...templates.orderConfirmation(order) })
@@ -122,6 +135,10 @@ router.post('/confirm-session', requireAuth, validate(sessionSchema), async (req
   })
   if (!order) throw notFound('Order not found.')
   if (order.paymentStatus === 'PAID') {
+    await removePurchasedCartItems(
+      order.userId,
+      order.items.map((item) => item.variantId),
+    )
     return res.json({ paid: true, order: serializeOrder(order) })
   }
 

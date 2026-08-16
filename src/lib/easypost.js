@@ -24,25 +24,43 @@ function getClient() {
   return client
 }
 
+const BOTTLE_WEIGHT_OZ = 3
+const SMALL_BOX = {
+  maxBottles: 8,
+  length: 6,
+  width: 4,
+  height: 2,
+  baseWeightOz: 5,
+}
+const LARGE_BOX = {
+  length: 9,
+  width: 6,
+  height: 4,
+  baseWeightOz: 6,
+}
+
 /**
- * Collapses a cart into one parcel: weights add up, and the box grows to the
- * largest footprint requested by any item.
+ * Builds the parcel supplied to EasyPost from Brett's packing rules.
+ *
+ * 1–8 bottles:  6 × 4 × 2 in, 5 oz box/packing + 3 oz per bottle.
+ * 9+ bottles:   9 × 6 × 4 in, 6 oz box/packing + 3 oz per bottle.
+ *
+ * The large box is expected to hold up to 40 bottles. It remains the selected
+ * tier above 40 so a quote is still available instead of silently dropping an
+ * order; fulfillment can split unusually large orders when packing.
  */
-export function buildParcel(items, defaults) {
-  const totalWeight = items.reduce(
-    (sum, item) => sum + (Number(item.weightOz) || 0) * (Number(item.qty) || 1),
+export function buildParcel(items) {
+  const bottleCount = items.reduce(
+    (sum, item) => sum + Math.max(0, Number(item.qty) || 0),
     0,
   )
-
-  const length = Math.max(defaults.lengthIn, ...items.map((item) => item.lengthIn || 0))
-  const width = Math.max(defaults.widthIn, ...items.map((item) => item.widthIn || 0))
-  const height = Math.max(defaults.heightIn, ...items.map((item) => item.heightIn || 0))
+  const box = bottleCount <= SMALL_BOX.maxBottles ? SMALL_BOX : LARGE_BOX
 
   return {
-    length,
-    width,
-    height,
-    weight: Math.max(defaults.minWeightOz, Number(totalWeight.toFixed(2))),
+    length: box.length,
+    width: box.width,
+    height: box.height,
+    weight: box.baseWeightOz + BOTTLE_WEIGHT_OZ * bottleCount,
   }
 }
 

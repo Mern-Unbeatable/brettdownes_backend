@@ -8,7 +8,13 @@ import { sendMail } from '../../lib/mailer.js'
 import { templates } from '../../lib/email-templates.js'
 import { refreshRates } from '../../lib/easypost.js'
 import { getAdminRecipients, getSettings } from '../settings/settings.service.js'
+import { removePurchasedCartItems } from '../cart/cart.service.js'
 import { nextOrderNumber, resolveCart } from './cart.service.js'
+import {
+  calculateBulkDiscount,
+  calculateCouponDiscount,
+  getActiveDiscountTiers,
+} from './discount.service.js'
 import { ORDER_INCLUDE, ORDER_LIST_INCLUDE, serializeOrder } from './order.serializer.js'
 
 const createOrderSchema = z
@@ -41,6 +47,7 @@ const createOrderSchema = z
     rateId: z.string().trim().max(120).optional(),
     pickupLocationId: z.string().trim().min(1).max(80).optional(),
     notes: z.string().trim().max(2000).optional().or(z.literal('')),
+    couponCode: z.string().trim().max(40).optional().or(z.literal('')),
     saveAddress: z.boolean().default(false),
   })
   .superRefine((value, ctx) => {
@@ -103,7 +110,22 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
     service = rate.service
   }
 
-  const totalCents = subtotalCents + shippingCents
+  const tiers = await getActiveDiscountTiers()
+  const bulkDiscount = calculateBulkDiscount(items, tiers.map((tier) => ({
+    ...tier,
+    detail: tier.name,
+  })))
+  const couponDiscount = body.couponCode
+    ? await calculateCouponDiscount(items, body.couponCode)
+    : null
+  const discountCents = Math.min(
+    subtotalCents,
+    bulkDiscount.discountCents + (couponDiscount?.discountCents || 0),
+  )
+  const discountLabel = [bulkDiscount.discountLabel, couponDiscount?.discountLabel]
+    .filter(Boolean)
+    .join(' + ') || null
+  const totalCents = Math.max(0, subtotalCents - discountCents + shippingCents)
   const paymentMethod = body.fulfillment === 'PICKUP' ? 'PICKUP' : 'STRIPE'
 
   const order = await prisma.order.create({
@@ -116,6 +138,9 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
       fulfillment: body.fulfillment,
 
       subtotalCents,
+      discountCents,
+      discountLabel,
+      couponCode: couponDiscount?.code || null,
       shippingCents,
       totalCents,
 
@@ -184,6 +209,16 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
 
   // Pickup orders are confirmed immediately; card orders wait for /payments/confirm.
   if (paymentMethod === 'PICKUP') {
+    if (couponDiscount?.couponId) {
+      await prisma.coupon.update({
+        where: { id: couponDiscount.couponId },
+        data: { usageCount: { increment: 1 } },
+      })
+    }
+    await removePurchasedCartItems(
+      req.user.id,
+      order.items.map((item) => item.variantId),
+    )
     sendMail({ to: order.contactEmail, ...templates.orderConfirmation(order) })
     if (settings.notifyNewOrder) {
       sendMail({ to: await getAdminRecipients(settings), ...templates.adminNewOrder(order) })

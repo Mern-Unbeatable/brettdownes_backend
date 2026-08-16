@@ -38,7 +38,7 @@ router.post('/rates', requireAuth, validate(ratesSchema), async (req, res) => {
   const { items, subtotalCents } = await resolveCart(lines)
   const settings = await getSettings()
 
-  const parcel = buildParcel(items, settings.defaultParcel)
+  const parcel = buildParcel(items)
 
   const { shipmentId, rates } = await createShipmentWithRates({
     toAddress: {
