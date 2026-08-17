@@ -61,3 +61,13 @@ test('applies kit reward only to kit lines', () => {
   assert.equal(result.discountCents, 2_500)
   assert.equal(result.tierId, 'kits')
 })
+
+test('treats qty 10+ of one item as a full kit', () => {
+  const result = calculateBulkDiscount(
+    [{ unitPriceCents: 8_000, qty: 10, sku: 'MOTS-C-10MG' }],
+    tiers,
+  )
+  // Kit 25% on $800 = $200, which beats order 20% on $800 = $160.
+  assert.equal(result.discountCents, 20_000)
+  assert.equal(result.tierId, 'kits')
+})

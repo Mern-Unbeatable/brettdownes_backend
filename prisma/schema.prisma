@@ -98,6 +98,9 @@ model Product {
   form        String   @default("Lyophilized")
   image       String   @default("")
   highlights  String[] @default([])
+  badge       String   @default("")
+  showOnHome  Boolean  @default(false)
+  homeOrder   Int      @default(0)
   isActive    Boolean  @default(true)
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
@@ -108,6 +111,7 @@ model Product {
   coaDocuments CoaDocument[]
 
   @@index([isActive])
+  @@index([showOnHome, homeOrder])
   @@index([category])
 }
 

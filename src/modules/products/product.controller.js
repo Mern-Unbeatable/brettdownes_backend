@@ -34,6 +34,9 @@ function serializeProduct(product) {
     form: product.form,
     image: product.image,
     highlights: product.highlights,
+    badge: product.badge,
+    showOnHome: product.showOnHome,
+    homeOrder: product.homeOrder,
     isActive: product.isActive,
     sortOrder: product.sortOrder,
     createdAt: product.createdAt,
@@ -83,6 +86,110 @@ async function variantCreateData(input) {
     priceCents: toCents(price),
     sku: sku?.trim() ? sku.trim() : await uniqueSku(`${rest.dose || 'VAR'}`),
   }
+}
+
+async function assertHomepageSelection(showOnHome, homeOrder, ignoreId) {
+  if (!showOnHome) return
+  const whereOther = {
+    showOnHome: true,
+    ...(ignoreId ? { NOT: { id: ignoreId } } : {}),
+  }
+  const [selected, positionTaken] = await Promise.all([
+    prisma.product.count({ where: whereOther }),
+    prisma.product.findFirst({
+      where: { ...whereOther, homeOrder },
+      select: { name: true },
+    }),
+  ])
+  if (selected >= 4) {
+    throw badRequest('Only four products can be selected for the homepage. Remove one first.')
+  }
+  if (positionTaken) {
+    throw badRequest(`Homepage position ${homeOrder + 1} is already used by ${positionTaken.name}.`)
+  }
+}
+
+const ACTIVE_VARIANTS = {
+  where: { isActive: true },
+  orderBy: [{ sortOrder: 'asc' }, { priceCents: 'asc' }],
+}
+
+/** Top 4 by units sold on paid orders; fill with catalogue order if sales are thin. */
+async function getBestSellingProducts(limit = 4) {
+  const sold = await prisma.orderItem.groupBy({
+    by: ['variantId'],
+    where: {
+      variantId: { not: null },
+      order: { paymentStatus: 'PAID' },
+    },
+    _sum: { qty: true },
+    orderBy: { _sum: { qty: 'desc' } },
+    take: 40,
+  })
+
+  const variantIds = sold.map((row) => row.variantId).filter(Boolean)
+  const variants = variantIds.length
+    ? await prisma.variant.findMany({
+        where: { id: { in: variantIds }, isActive: true, product: { isActive: true } },
+        select: { id: true, productId: true },
+      })
+    : []
+  const productByVariant = new Map(variants.map((variant) => [variant.id, variant.productId]))
+
+  const rankedIds = []
+  const seen = new Set()
+  for (const row of sold) {
+    const productId = productByVariant.get(row.variantId)
+    if (!productId || seen.has(productId)) continue
+    seen.add(productId)
+    rankedIds.push(productId)
+    if (rankedIds.length >= limit) break
+  }
+
+  if (rankedIds.length < limit) {
+    const fillers = await prisma.product.findMany({
+      where: { isActive: true, ...(seen.size ? { id: { notIn: [...seen] } } : {}) },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      take: limit - rankedIds.length,
+      select: { id: true },
+    })
+    for (const product of fillers) rankedIds.push(product.id)
+  }
+
+  if (!rankedIds.length) return []
+
+  const products = await prisma.product.findMany({
+    where: { id: { in: rankedIds }, isActive: true },
+    include: { variants: ACTIVE_VARIANTS },
+  })
+  const byId = new Map(products.map((product) => [product.id, product]))
+  return rankedIds.map((id) => byId.get(id)).filter(Boolean)
+}
+
+/**
+ * Homepage grid: admin-selected featured products (max 4), or best sellers
+ * from paid orders when none are selected.
+ */
+export async function listFeaturedProducts(req, res) {
+  const featured = await prisma.product.findMany({
+    where: { isActive: true, showOnHome: true },
+    include: { variants: ACTIVE_VARIANTS },
+    orderBy: [{ homeOrder: 'asc' }, { sortOrder: 'asc' }],
+    take: 4,
+  })
+
+  if (featured.length) {
+    return res.json({
+      source: 'featured',
+      products: featured.map(serializeProduct),
+    })
+  }
+
+  const bestsellers = await getBestSellingProducts(4)
+  res.json({
+    source: 'bestsellers',
+    products: bestsellers.map(serializeProduct),
+  })
 }
 
 export async function listProducts(req, res) {
@@ -136,6 +243,7 @@ export async function getProduct(req, res) {
 
 export async function createProduct(req, res) {
   const { variants, slug, ...rest } = req.body
+  await assertHomepageSelection(rest.showOnHome, rest.homeOrder)
 
   const providedSkus = variants.map((variant) => variant.sku?.trim()).filter(Boolean)
   if (new Set(providedSkus.map((value) => value.toLowerCase())).size !== providedSkus.length) {
@@ -162,6 +270,7 @@ export async function updateProduct(req, res) {
   if (!existing) throw notFound('Product not found.')
 
   const { slug, ...rest } = req.body
+  await assertHomepageSelection(rest.showOnHome, rest.homeOrder, id)
   const data = { ...rest }
   if (slug && slug !== existing.slug) data.slug = await uniqueSlug(slug, id)
 

@@ -1,7 +1,9 @@
 import { prisma } from '../../lib/prisma.js'
 import { badRequest } from '../../lib/http-error.js'
 
+/** A full kit is qty 10+ of one cart line, or any line explicitly labeled as a kit. */
 function isKit(item) {
+  if (Number(item.qty) >= 10) return true
   return /\bkit\b/i.test(`${item.productName || ''} ${item.dose || ''} ${item.sku || ''}`)
 }
 
@@ -76,7 +78,7 @@ export async function calculateCouponDiscount(items, code, { throwOnInvalid = tr
 /**
  * Calculates every eligible reward and applies only the one producing the
  * largest discount. ORDER rewards affect the entire subtotal; KIT rewards
- * affect kit line items only.
+ * affect full-kit lines only (qty 10+ of one item, or items labeled as a kit).
  */
 export function calculateBulkDiscount(items, tiers = []) {
   const subtotalCents = items.reduce(

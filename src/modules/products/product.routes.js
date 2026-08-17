@@ -33,6 +33,7 @@ const spreadsheetUpload = multer({
 
 // The storefront sits behind the portal gate, so the catalogue requires a session.
 router.get('/', requireAuth, validate(productQuerySchema, 'query'), controller.listProducts)
+router.get('/featured', requireAuth, controller.listFeaturedProducts)
 router.post('/', requireAdmin, validate(productCreateSchema), controller.createProduct)
 
 router.post('/import', requireAdmin, (req, res, next) => {
