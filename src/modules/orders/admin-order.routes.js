@@ -28,6 +28,27 @@ const paymentSchema = z.object({
   paymentStatus: z.enum(['UNPAID', 'PAID', 'REFUNDED']),
 })
 
+function detectLabelFile(url, headerType, buffer) {
+  const magic = buffer.subarray(0, 8).toString('latin1')
+  if (magic.startsWith('%PDF')) return { contentType: 'application/pdf', extension: 'pdf' }
+  if (buffer[0] === 0x89 && magic.includes('PNG')) return { contentType: 'image/png', extension: 'png' }
+  if (magic.startsWith('GIF8')) return { contentType: 'image/gif', extension: 'gif' }
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) return { contentType: 'image/jpeg', extension: 'jpg' }
+
+  const type = String(headerType || '').toLowerCase()
+  if (type.includes('png')) return { contentType: 'image/png', extension: 'png' }
+  if (type.includes('jpeg') || type.includes('jpg')) return { contentType: 'image/jpeg', extension: 'jpg' }
+  if (type.includes('gif')) return { contentType: 'image/gif', extension: 'gif' }
+  if (type.includes('pdf')) return { contentType: 'application/pdf', extension: 'pdf' }
+
+  if (/\.png(\?|$)/i.test(url)) return { contentType: 'image/png', extension: 'png' }
+  if (/\.jpe?g(\?|$)/i.test(url)) return { contentType: 'image/jpeg', extension: 'jpg' }
+  if (/\.gif(\?|$)/i.test(url)) return { contentType: 'image/gif', extension: 'gif' }
+  if (/\.pdf(\?|$)/i.test(url)) return { contentType: 'application/pdf', extension: 'pdf' }
+
+  return { contentType: type || 'image/png', extension: 'png' }
+}
+
 const router = Router()
 
 router.use(requireAdmin)
@@ -224,9 +245,10 @@ router.get('/:id/label/download', async (req, res) => {
     throw badRequest('Could not fetch the shipping label from the carrier.')
   }
 
-  const contentType = upstream.headers.get('content-type') || 'application/pdf'
   const buffer = Buffer.from(await upstream.arrayBuffer())
-  const filename = `shipping-label-${order.orderNumber}.pdf`
+  const headerType = String(upstream.headers.get('content-type') || '').split(';')[0].trim()
+  const { contentType, extension } = detectLabelFile(order.labelUrl, headerType, buffer)
+  const filename = `shipping-label-${order.orderNumber}.${extension}`
 
   res.setHeader('Content-Type', contentType)
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)

@@ -39,6 +39,7 @@ export function createApp() {
         callback(new Error(`Origin ${origin} is not allowed by CORS.`))
       },
       credentials: true,
+      exposedHeaders: ['Content-Disposition', 'Content-Type'],
     }),
   )
 
