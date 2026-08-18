@@ -8,6 +8,16 @@ const slug = z
   .max(120)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Slug may only contain lowercase letters, numbers and dashes.')
 
+export const PRODUCT_CATEGORIES = ['Peptides', 'Blends']
+
+export function normalizeCategory(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (raw.includes('blend')) return 'Blends'
+  return 'Peptides'
+}
+
+const category = z.preprocess(normalizeCategory, z.enum(['Peptides', 'Blends']))
+
 export const variantInputSchema = z.object({
   dose: z.string().trim().min(1, 'Dose is required.').max(60),
   price: z.coerce.number().min(0, 'Price cannot be negative.').max(1_000_000),
@@ -28,7 +38,7 @@ export const variantUpdateSchema = variantInputSchema.partial()
 export const productCreateSchema = z.object({
   name: z.string().trim().min(1, 'Product name is required.').max(160),
   slug: slug.optional(),
-  category: z.string().trim().min(1).max(80).default('Peptides'),
+  category,
   summary: z.string().trim().max(600).default(''),
   description: z.string().trim().max(6000).default(''),
   purity: z.string().trim().max(60).default(''),
@@ -50,7 +60,7 @@ export const productUpdateSchema = productCreateSchema
 
 export const productQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),
-  category: z.string().trim().max(80).optional(),
+  category: category.optional(),
   includeInactive: z
     .union([z.literal('true'), z.literal('false'), z.boolean()])
     .transform((value) => value === true || value === 'true')
