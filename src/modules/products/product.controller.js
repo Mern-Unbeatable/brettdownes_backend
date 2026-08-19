@@ -79,12 +79,26 @@ async function uniqueSku(seed = 'PO') {
   return `${root}-${Date.now().toString(36).toUpperCase()}`
 }
 
+async function assertSkuAvailable(sku, ignoreId) {
+  const value = String(sku || '').trim()
+  if (!value) throw badRequest('Every variant needs a SKU.')
+  const clash = await prisma.variant.findFirst({
+    where: {
+      sku: { equals: value, mode: 'insensitive' },
+      ...(ignoreId ? { NOT: { id: ignoreId } } : {}),
+    },
+    select: { sku: true },
+  })
+  if (clash) throw badRequest(`SKU "${value}" is already used.`)
+  return value
+}
+
 async function variantCreateData(input) {
   const { price, sku, ...rest } = input
   return {
     ...rest,
     priceCents: toCents(price),
-    sku: sku?.trim() ? sku.trim() : await uniqueSku(`${rest.dose || 'VAR'}`),
+    sku: await assertSkuAvailable(sku),
   }
 }
 
@@ -245,9 +259,15 @@ export async function createProduct(req, res) {
   const { variants, slug, ...rest } = req.body
   await assertHomepageSelection(rest.showOnHome, rest.homeOrder)
 
-  const providedSkus = variants.map((variant) => variant.sku?.trim()).filter(Boolean)
+  const providedSkus = variants.map((variant) => String(variant.sku || '').trim())
+  if (providedSkus.some((sku) => !sku)) {
+    throw badRequest('Every variant needs a SKU.')
+  }
   if (new Set(providedSkus.map((value) => value.toLowerCase())).size !== providedSkus.length) {
     throw badRequest('Variant SKUs must be unique.')
+  }
+  for (const sku of providedSkus) {
+    await assertSkuAvailable(sku)
   }
 
   const product = await prisma.product.create({
@@ -312,7 +332,7 @@ export async function updateVariant(req, res) {
   const { price, sku, ...rest } = req.body
   const data = { ...rest }
   if (price !== undefined) data.priceCents = toCents(price)
-  if (sku?.trim()) data.sku = sku.trim()
+  if (sku !== undefined) data.sku = await assertSkuAvailable(sku, variantId)
 
   const variant = await prisma.variant.update({ where: { id: variantId }, data })
   res.json({ variant: serializeVariant(variant) })

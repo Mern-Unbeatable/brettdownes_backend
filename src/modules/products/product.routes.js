@@ -4,7 +4,7 @@ import { requireAdmin, requireAuth } from '../../middleware/auth.js'
 import { validate } from '../../middleware/validate.js'
 import { badRequest } from '../../lib/http-error.js'
 import * as controller from './product.controller.js'
-import { importSpreadsheet } from './product.import.js'
+import { importSpreadsheet, buildInventoryTemplate } from './product.import.js'
 import {
   productCreateSchema,
   productQuerySchema,
@@ -34,6 +34,15 @@ const spreadsheetUpload = multer({
 // The storefront sits behind the portal gate, so the catalogue requires a session.
 router.get('/', requireAuth, validate(productQuerySchema, 'query'), controller.listProducts)
 router.get('/featured', requireAuth, controller.listFeaturedProducts)
+router.get('/import/template', requireAdmin, async (req, res) => {
+  const buffer = await buildInventoryTemplate()
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
+  res.setHeader('Content-Disposition', 'attachment; filename="peptide-ops-inventory.xlsx"')
+  res.send(buffer)
+})
 router.post('/', requireAdmin, validate(productCreateSchema), controller.createProduct)
 
 router.post('/import', requireAdmin, (req, res, next) => {

@@ -1,9 +1,6 @@
 import * as XLSX from 'xlsx'
 import { prisma } from '../../lib/prisma.js'
 import { badRequest } from '../../lib/http-error.js'
-import { serializeProduct, slugify, uniqueSku, uniqueSlug } from './product.controller.js'
-
-const DOSE_RE = /^(.*?)\s+(\d+(?:\.\d+)?\s*(?:mg|ml|mcg|iu|g))\s*$/i
 
 function normalizeDose(value) {
   return String(value || '')
@@ -18,179 +15,159 @@ function normalizeName(value) {
     .replace(/\s+/g, ' ')
 }
 
-/** Split "BPC-157 5mg" → product + dose. Names without a dose stay whole. */
-export function parseItemName(raw) {
-  const name = normalizeName(raw)
-  if (!name) return null
+function pickKey(keys, pattern) {
+  return keys.find((key) => pattern.test(key))
+}
 
-  const match = name.match(DOSE_RE)
-  if (match) {
-    return {
-      productName: normalizeName(match[1]),
-      dose: normalizeDose(match[2]),
-    }
+function parseQuantity(raw, rowNumber) {
+  const quantity = Number.parseInt(String(raw ?? '').replace(/[^\d-]/g, ''), 10)
+  if (!Number.isFinite(quantity) || quantity < 0) {
+    throw badRequest(`Row ${rowNumber}: Quantity must be a whole number of 0 or more.`)
   }
-
-  return { productName: name, dose: 'Standard' }
+  return quantity
 }
 
 function readRows(buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer' })
-  const sheetName = workbook.SheetNames[0]
+  const sheetName =
+    workbook.SheetNames.find((name) => /inventory|stock|qty|products/i.test(name)) ||
+    workbook.SheetNames[0]
   if (!sheetName) throw badRequest('The spreadsheet has no sheets.')
 
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' })
-  if (!rows.length) throw badRequest('The spreadsheet is empty.')
+  if (!rows.length) throw badRequest('The Inventory sheet is empty.')
 
-  const sample = rows[0]
-  const keys = Object.keys(sample)
-  const nameKey =
-    keys.find((key) => /item\s*name|product|name|товар/i.test(key)) ||
-    keys.find((key) => /name/i.test(key))
-  const qtyKey =
-    keys.find((key) => /quantity|qty|stock|кол/i.test(key)) ||
-    keys.find((key) => /count|amount/i.test(key))
-  const barcodeKey = keys.find((key) => /barcode|sku|code/i.test(key))
+  const keys = Object.keys(rows[0] || {})
+  const skuKey = pickKey(keys, /^(sku|barcode|variant\s*sku|item\s*code)$/i) || pickKey(keys, /sku|barcode/i)
+  const productKey =
+    pickKey(keys, /^(product|item\s*name|name)$/i) || pickKey(keys, /product|item\s*name|^name$/i)
+  const doseKey = pickKey(keys, /^(dose|strength|size)$/i) || pickKey(keys, /dose|strength/)
+  const qtyKey = pickKey(keys, /^(quantity|qty|stock)$/i) || pickKey(keys, /quantity|qty|stock/)
 
-  if (!nameKey) {
-    throw badRequest('Could not find an "Item name" column in the spreadsheet.')
-  }
-  if (!qtyKey) {
-    throw badRequest('Could not find a "Quantity" column in the spreadsheet.')
-  }
+  if (!qtyKey) throw badRequest('Add a Quantity column (Quantity / Qty / Stock).')
+  if (!skuKey) throw badRequest('Add a SKU column. Every variant row must include a SKU.')
 
   return rows
     .map((row, index) => {
-      const parsed = parseItemName(row[nameKey])
-      if (!parsed) return null
-      const quantity = Number.parseInt(String(row[qtyKey]).replace(/[^\d-]/g, ''), 10)
-      if (!Number.isFinite(quantity) || quantity < 0) {
-        throw badRequest(`Row ${index + 2}: quantity must be a whole number ≥ 0.`)
+      const sku = String(row[skuKey] || '').trim()
+      const productName = productKey ? normalizeName(row[productKey]) : ''
+      const dose = doseKey ? normalizeDose(row[doseKey]) : ''
+      if (!sku && !productName && !dose) return null
+      if (!sku) {
+        throw badRequest(`Row ${index + 2}: every variant needs a SKU.`)
       }
       return {
-        ...parsed,
-        quantity,
-        barcode: barcodeKey ? String(row[barcodeKey] || '').trim() : '',
-        rawName: normalizeName(row[nameKey]),
+        sku,
+        productName,
+        dose,
+        quantity: parseQuantity(row[qtyKey], index + 2),
       }
     })
     .filter(Boolean)
 }
 
 /**
- * Upserts products/variants from a Main Store style spreadsheet.
- * Matching is by product name + dose (case-insensitive). Existing prices are
- * preserved; brand-new variants start at $0 so an admin can price them later.
+ * Updates on-hand quantity only. Rows match by SKU. Unknown SKUs are skipped.
+ * Prices, photos, and names are never changed.
  */
 export async function importSpreadsheet(buffer) {
   const entries = readRows(buffer)
+  const variants = await prisma.variant.findMany({
+    include: { product: { select: { id: true, name: true } } },
+  })
 
-  const grouped = new Map()
-  for (const entry of entries) {
-    const key = entry.productName.toLowerCase()
-    if (!grouped.has(key)) grouped.set(key, [])
-    grouped.get(key).push(entry)
-  }
+  const bySku = new Map(variants.map((variant) => [variant.sku.trim().toLowerCase(), variant]))
+  const byNameDose = new Map(
+    variants.map((variant) => [
+      `${variant.product.name.trim().toLowerCase()}::${normalizeDose(variant.dose).toLowerCase()}`,
+      variant,
+    ]),
+  )
 
   const summary = {
-    productsCreated: 0,
-    productsUpdated: 0,
-    variantsCreated: 0,
-    variantsUpdated: 0,
     rows: entries.length,
+    variantsUpdated: 0,
+    skipped: 0,
+    skippedRows: [],
   }
 
-  const touched = []
+  const seen = new Set()
 
-  for (const [, items] of grouped) {
-    const productName = items[0].productName
+  for (const entry of entries) {
+    const skuMatch = entry.sku ? bySku.get(entry.sku.toLowerCase()) : null
+    const nameMatch =
+      entry.productName && entry.dose
+        ? byNameDose.get(`${entry.productName.toLowerCase()}::${entry.dose.toLowerCase()}`)
+        : null
+    const variant = skuMatch || nameMatch
 
-    let product = await prisma.product.findFirst({
-      where: { name: { equals: productName, mode: 'insensitive' } },
-      include: { variants: true },
-    })
-
-    if (!product) {
-      const createVariants = []
-      for (const [index, item] of items.entries()) {
-        createVariants.push({
-          dose: item.dose,
-          priceCents: 0,
-          sku: item.barcode || (await uniqueSku(`${slugify(productName)}-${item.dose}`)),
-          stock: item.quantity,
-          sortOrder: index,
-          weightOz: 2,
-          lengthIn: 6,
-          widthIn: 4,
-          heightIn: 2,
-          isActive: true,
-        })
-      }
-
-      product = await prisma.product.create({
-        data: {
-          name: productName,
-          slug: await uniqueSlug(productName),
-          category: 'Peptides',
-          summary: '',
-          description: '',
-          isActive: true,
-          variants: { create: createVariants },
-        },
-        include: { variants: { orderBy: { sortOrder: 'asc' } } },
-      })
-
-      summary.productsCreated += 1
-      summary.variantsCreated += createVariants.length
-      touched.push(product)
+    if (!variant) {
+      summary.skipped += 1
+      summary.skippedRows.push(entry.sku || `${entry.productName} ${entry.dose}`.trim())
       continue
     }
+    if (seen.has(variant.id)) continue
+    seen.add(variant.id)
 
-    summary.productsUpdated += 1
-
-    for (const [index, item] of items.entries()) {
-      const existing = product.variants.find(
-        (variant) => normalizeDose(variant.dose).toLowerCase() === item.dose.toLowerCase(),
-      )
-
-      if (existing) {
-        await prisma.variant.update({
-          where: { id: existing.id },
-          data: {
-            stock: item.quantity,
-            ...(item.barcode && !existing.sku ? { sku: item.barcode } : {}),
-          },
-        })
-        summary.variantsUpdated += 1
-      } else {
-        await prisma.variant.create({
-          data: {
-            productId: product.id,
-            dose: item.dose,
-            priceCents: 0,
-            sku: item.barcode || (await uniqueSku(`${slugify(productName)}-${item.dose}`)),
-            stock: item.quantity,
-            sortOrder: product.variants.length + index,
-            weightOz: 2,
-            lengthIn: 6,
-            widthIn: 4,
-            heightIn: 2,
-            isActive: true,
-          },
-        })
-        summary.variantsCreated += 1
-      }
-    }
-
-    const refreshed = await prisma.product.findUnique({
-      where: { id: product.id },
-      include: { variants: { orderBy: [{ sortOrder: 'asc' }, { priceCents: 'asc' }] } },
+    await prisma.variant.update({
+      where: { id: variant.id },
+      data: { stock: entry.quantity },
     })
-    touched.push(refreshed)
+    summary.variantsUpdated += 1
   }
 
-  return {
-    summary,
-    products: touched.map(serializeProduct),
-  }
+  return { summary }
+}
+
+/** Live Excel the admin can fill in — SKU locked, Quantity is the editable column. */
+export async function buildInventoryTemplate() {
+  const products = await prisma.product.findMany({
+    include: { variants: { orderBy: [{ sortOrder: 'asc' }, { dose: 'asc' }] } },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+  })
+
+  const inventoryRows = [
+    ['SKU', 'Product', 'Dose', 'Quantity'],
+    ...products.flatMap((product) =>
+      product.variants.map((variant) => [
+        variant.sku,
+        product.name,
+        variant.dose,
+        variant.stock,
+      ]),
+    ),
+  ]
+
+  const instructionRows = [
+    ['Peptide Ops — inventory update'],
+    [''],
+    ['Use this file to update stock only. One upload refreshes every matching variant.'],
+    [''],
+    ['Columns'],
+    ['SKU', 'Required. Matches the dose/variant. Do not change this value.'],
+    ['Product', 'Shown for reference. Changing it does not rename the live product.'],
+    ['Dose', 'Shown for reference (5mg, 10mg, etc.).'],
+    ['Quantity', 'Edit this. Enter the new on-hand count (0 or more).'],
+    [''],
+    ['Rules'],
+    ['1. Keep one row per dose. BPC-157 5mg and BPC-157 10mg are separate rows.'],
+    ['2. Do not add extra header rows above SKU / Product / Dose / Quantity.'],
+    ['3. Leave SKU exactly as exported. That is how the site finds the product.'],
+    ['4. Upload the saved .xlsx from Admin → Products → Import Excel.'],
+    ['5. Unknown SKUs are skipped. Prices, photos, and descriptions stay the same.'],
+  ]
+
+  const workbook = XLSX.utils.book_new()
+  const inventory = XLSX.utils.aoa_to_sheet(inventoryRows)
+  inventory['!cols'] = [{ wch: 22 }, { wch: 36 }, { wch: 12 }, { wch: 12 }]
+  inventory['!autofilter'] = { ref: `A1:D${Math.max(inventoryRows.length, 1)}` }
+  inventory['!freeze'] = { xSplit: 0, ySplit: 1 }
+
+  const instructions = XLSX.utils.aoa_to_sheet(instructionRows)
+  instructions['!cols'] = [{ wch: 18 }, { wch: 78 }]
+
+  XLSX.utils.book_append_sheet(workbook, inventory, 'Inventory')
+  XLSX.utils.book_append_sheet(workbook, instructions, 'Instructions')
+
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
 }
