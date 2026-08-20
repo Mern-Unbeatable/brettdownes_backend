@@ -16,7 +16,7 @@ export function serializeCartItem(entry) {
     slug: variant.product.slug,
     name: variant.product.name,
     dose: variant.dose,
-    sku: variant.sku,
+    barcode: variant.barcode,
     price: variant.priceCents / 100,
     priceCents: variant.priceCents,
     image: variant.image || variant.product.image,

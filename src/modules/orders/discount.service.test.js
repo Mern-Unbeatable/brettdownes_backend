@@ -31,7 +31,7 @@ const tiers = [
 
 test('applies the best eligible order tier', () => {
   const result = calculateBulkDiscount(
-    [{ unitPriceCents: 10_000, qty: 4, sku: 'VIAL' }],
+    [{ unitPriceCents: 10_000, qty: 4, barcode: 'VIAL' }],
     tiers,
   )
   assert.equal(result.discountCents, 8_000)
@@ -41,8 +41,8 @@ test('applies the best eligible order tier', () => {
 test('compares kit and order rewards without stacking', () => {
   const result = calculateBulkDiscount(
     [
-      { unitPriceCents: 20_000, qty: 1, sku: 'BPC-KIT' },
-      { unitPriceCents: 10_000, qty: 1, sku: 'VIAL' },
+      { unitPriceCents: 20_000, qty: 1, barcode: 'BPC-KIT' },
+      { unitPriceCents: 10_000, qty: 1, barcode: 'VIAL' },
     ],
     tiers,
   )
@@ -53,8 +53,8 @@ test('compares kit and order rewards without stacking', () => {
 test('applies kit reward only to kit lines', () => {
   const result = calculateBulkDiscount(
     [
-      { unitPriceCents: 10_000, qty: 1, sku: 'BPC-KIT' },
-      { unitPriceCents: 5_000, qty: 1, sku: 'VIAL' },
+      { unitPriceCents: 10_000, qty: 1, barcode: 'BPC-KIT' },
+      { unitPriceCents: 5_000, qty: 1, barcode: 'VIAL' },
     ],
     tiers,
   )
@@ -64,7 +64,7 @@ test('applies kit reward only to kit lines', () => {
 
 test('treats qty 10+ of one item as a full kit', () => {
   const result = calculateBulkDiscount(
-    [{ unitPriceCents: 8_000, qty: 10, sku: 'MOTS-C-10MG' }],
+    [{ unitPriceCents: 8_000, qty: 10, barcode: 'MOTS-C-10MG' }],
     tiers,
   )
   // Kit 25% on $800 = $200, which beats order 20% on $800 = $160.

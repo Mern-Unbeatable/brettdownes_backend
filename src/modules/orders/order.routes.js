@@ -171,7 +171,7 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
           variantId: item.variantId,
           productName: item.productName,
           dose: item.dose,
-          sku: item.sku,
+          barcode: item.barcode,
           image: item.image,
           unitPriceCents: item.unitPriceCents,
           qty: item.qty,

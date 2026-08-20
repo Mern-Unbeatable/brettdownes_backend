@@ -99,7 +99,7 @@ async function main() {
     name: 'Smoke Test Peptide',
     category: 'Peptides',
     summary: 'Temporary product created by the smoke test.',
-    variants: [{ dose: '5mg', price: 42.5, sku: `SMOKE-${Date.now()}`, stock: 3, weightOz: 2 }],
+    variants: [{ dose: '5mg', price: 42.5, barcode: `SMOKE-${Date.now()}`, stock: 3, weightOz: 2 }],
   })
   const productId = created.json.product?.id
   log('created product', `${created.json.product?.slug} / ${created.json.product?.variants?.[0]?.price}`)

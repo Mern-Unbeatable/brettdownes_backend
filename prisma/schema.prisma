@@ -137,7 +137,7 @@ model Variant {
   productId  String
   dose       String
   priceCents Int
-  sku        String   @unique
+  barcode    String   @unique
   image      String   @default("")
   stock      Int      @default(0)
   // Parcel data drives EasyPost rating; ounces and inches.
@@ -278,7 +278,7 @@ model OrderItem {
   // Snapshot so historical orders survive product edits and deletions.
   productName String
   dose        String
-  sku         String
+  barcode     String
   image       String  @default("")
   unitPriceCents Int
   qty         Int

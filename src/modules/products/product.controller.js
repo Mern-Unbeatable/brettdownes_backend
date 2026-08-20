@@ -1,4 +1,3 @@
-import crypto from 'node:crypto'
 import { prisma } from '../../lib/prisma.js'
 import { badRequest, notFound } from '../../lib/http-error.js'
 import { toCents, toDollars } from '../../lib/money.js'
@@ -9,7 +8,7 @@ function serializeVariant(variant) {
     dose: variant.dose,
     price: toDollars(variant.priceCents),
     priceCents: variant.priceCents,
-    sku: variant.sku,
+    barcode: variant.barcode,
     image: variant.image,
     stock: variant.stock,
     quantity: variant.stock,
@@ -68,37 +67,26 @@ async function uniqueSlug(base, ignoreId) {
   }
 }
 
-/** Internal inventory code — never required from admins or the spreadsheet. */
-async function uniqueSku(seed = 'PO') {
-  const root = slugify(seed).slice(0, 24).toUpperCase() || 'PO'
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const candidate = `${root}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`
-    const clash = await prisma.variant.findUnique({ where: { sku: candidate }, select: { id: true } })
-    if (!clash) return candidate
-  }
-  return `${root}-${Date.now().toString(36).toUpperCase()}`
-}
-
-async function assertSkuAvailable(sku, ignoreId) {
-  const value = String(sku || '').trim()
-  if (!value) throw badRequest('Every variant needs a SKU.')
+async function assertBarcodeAvailable(barcode, ignoreId) {
+  const value = String(barcode || '').trim()
+  if (!value) throw badRequest('Every variant needs a barcode.')
   const clash = await prisma.variant.findFirst({
     where: {
-      sku: { equals: value, mode: 'insensitive' },
+      barcode: { equals: value, mode: 'insensitive' },
       ...(ignoreId ? { NOT: { id: ignoreId } } : {}),
     },
-    select: { sku: true },
+    select: { barcode: true },
   })
-  if (clash) throw badRequest(`SKU "${value}" is already used.`)
+  if (clash) throw badRequest(`Barcode "${value}" is already used.`)
   return value
 }
 
 async function variantCreateData(input) {
-  const { price, sku, ...rest } = input
+  const { price, barcode, ...rest } = input
   return {
     ...rest,
     priceCents: toCents(price),
-    sku: await assertSkuAvailable(sku),
+    barcode: await assertBarcodeAvailable(barcode),
   }
 }
 
@@ -259,15 +247,15 @@ export async function createProduct(req, res) {
   const { variants, slug, ...rest } = req.body
   await assertHomepageSelection(rest.showOnHome, rest.homeOrder)
 
-  const providedSkus = variants.map((variant) => String(variant.sku || '').trim())
-  if (providedSkus.some((sku) => !sku)) {
-    throw badRequest('Every variant needs a SKU.')
+  const providedBarcodes = variants.map((variant) => String(variant.barcode || '').trim())
+  if (providedBarcodes.some((barcode) => !barcode)) {
+    throw badRequest('Every variant needs a barcode.')
   }
-  if (new Set(providedSkus.map((value) => value.toLowerCase())).size !== providedSkus.length) {
-    throw badRequest('Variant SKUs must be unique.')
+  if (new Set(providedBarcodes.map((value) => value.toLowerCase())).size !== providedBarcodes.length) {
+    throw badRequest('Variant barcodes must be unique.')
   }
-  for (const sku of providedSkus) {
-    await assertSkuAvailable(sku)
+  for (const barcode of providedBarcodes) {
+    await assertBarcodeAvailable(barcode)
   }
 
   const product = await prisma.product.create({
@@ -329,10 +317,10 @@ export async function updateVariant(req, res) {
   const existing = await prisma.variant.findUnique({ where: { id: variantId } })
   if (!existing) throw notFound('Variant not found.')
 
-  const { price, sku, ...rest } = req.body
+  const { price, barcode, ...rest } = req.body
   const data = { ...rest }
   if (price !== undefined) data.priceCents = toCents(price)
-  if (sku !== undefined) data.sku = await assertSkuAvailable(sku, variantId)
+  if (barcode !== undefined) data.barcode = await assertBarcodeAvailable(barcode, variantId)
 
   const variant = await prisma.variant.update({ where: { id: variantId }, data })
   res.json({ variant: serializeVariant(variant) })
@@ -350,4 +338,4 @@ export async function deleteVariant(req, res) {
   res.json({ ok: true })
 }
 
-export { serializeProduct, serializeVariant, uniqueSlug, uniqueSku, slugify }
+export { serializeProduct, serializeVariant, uniqueSlug, slugify }

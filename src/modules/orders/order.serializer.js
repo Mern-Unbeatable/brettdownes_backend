@@ -85,7 +85,7 @@ export function serializeOrder(order) {
       variantId: item.variantId,
       productName: item.productName,
       dose: item.dose,
-      sku: item.sku,
+      barcode: item.barcode,
       image: item.image,
       qty: item.qty,
       unitPriceCents: item.unitPriceCents,

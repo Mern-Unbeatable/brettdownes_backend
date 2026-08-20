@@ -33,7 +33,7 @@ export async function resolveCart(lines) {
       productName: variant.product.name,
       slug: variant.product.slug,
       dose: variant.dose,
-      sku: variant.sku,
+      barcode: variant.barcode,
       image: variant.image || variant.product.image,
       unitPriceCents: variant.priceCents,
       qty,

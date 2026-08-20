@@ -21,11 +21,11 @@ const category = z.preprocess(normalizeCategory, z.enum(['Peptides', 'Blends']))
 export const variantInputSchema = z.object({
   dose: z.string().trim().min(1, 'Dose is required.').max(60),
   price: z.coerce.number().min(0, 'Price cannot be negative.').max(1_000_000),
-  sku: z
+  barcode: z
     .string()
     .trim()
-    .min(1, 'Every variant needs a SKU.')
-    .max(60, 'SKU must be 60 characters or fewer.'),
+    .min(1, 'Every variant needs a barcode.')
+    .max(60, 'Barcode must be 60 characters or fewer.'),
   image: z.string().trim().max(500).default(''),
   stock: z.coerce.number().int().min(0).default(0),
   weightOz: z.coerce.number().min(0.1, 'Weight must be at least 0.1 oz.').max(1120).default(2),

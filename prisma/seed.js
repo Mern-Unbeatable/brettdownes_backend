@@ -62,13 +62,13 @@ async function seedProducts() {
 
     for (const [variantIndex, variant] of product.variants.entries()) {
       await prisma.variant.upsert({
-        where: { sku: variant.sku },
+        where: { barcode: variant.barcode },
         update: {},
         create: {
           productId: record.id,
           dose: variant.dose,
           priceCents: toCents(variant.price),
-          sku: variant.sku,
+          barcode: variant.barcode,
           image: variant.image ?? product.image ?? '',
           stock: 25,
           sortOrder: variantIndex,

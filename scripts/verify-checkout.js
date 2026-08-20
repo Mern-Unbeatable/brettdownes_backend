@@ -319,7 +319,7 @@ async function main() {
   const productWords = [
     product.name,
     variant.dose,
-    variant.sku,
+    variant.barcode,
     product.slug,
     product.category,
     'peptide',
@@ -327,7 +327,7 @@ async function main() {
   const payloadText = decodeURIComponent(intentRequest?.body || '').toLowerCase()
   const leaked = productWords.filter((word) => word && payloadText.includes(word.toLowerCase()))
   check(
-    'no product name, dose, SKU or category reaches Stripe',
+    'no product name, dose, barcode or category reaches Stripe',
     leaked.length === 0,
     `leaked: ${leaked.join(', ')}`,
   )

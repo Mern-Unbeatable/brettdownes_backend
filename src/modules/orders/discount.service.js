@@ -4,7 +4,7 @@ import { badRequest } from '../../lib/http-error.js'
 /** A full kit is qty 10+ of one cart line, or any line explicitly labeled as a kit. */
 function isKit(item) {
   if (Number(item.qty) >= 10) return true
-  return /\bkit\b/i.test(`${item.productName || ''} ${item.dose || ''} ${item.sku || ''}`)
+  return /\bkit\b/i.test(`${item.productName || ''} ${item.dose || ''} ${item.barcode || ''}`)
 }
 
 export async function getActiveDiscountTiers() {
