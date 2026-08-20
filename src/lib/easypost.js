@@ -92,6 +92,48 @@ function normalizeRate(rate) {
   }
 }
 
+function normalizeToken(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+/**
+ * Only expose tracked USPS / FedEx / UPS services Brett selected:
+ * USPS Priority Mail, Ground Advantage, Priority Mail Express
+ * FedEx Ground, Home Delivery, 2Day
+ * UPS Ground, 3 Day Select, 2nd Day Air
+ */
+const ALLOWED_SHIPPING = {
+  usps: ['priority', 'groundadvantage', 'express', 'prioritymailexpress', 'expressmail'],
+  fedex: ['fedexground', 'ground', 'groundhomedelivery', 'homedelivery', 'fedex2day', '2day'],
+  ups: ['ground', '3dayselect', '2nddayair', 'seconddayair'],
+}
+
+export function isAllowedShippingRate(rate) {
+  const carrier = normalizeToken(rate?.carrier)
+  const service = normalizeToken(rate?.service)
+  if (!carrier || !service) return false
+
+  if (carrier.includes('usps') || carrier === 'uspostal') {
+    return ALLOWED_SHIPPING.usps.some((token) => service.includes(token) || token.includes(service))
+  }
+  if (carrier.includes('fedex')) {
+    return ALLOWED_SHIPPING.fedex.some((token) => service.includes(token) || token.includes(service))
+  }
+  if (carrier.includes('ups')) {
+    return ALLOWED_SHIPPING.ups.some((token) => service.includes(token) || token.includes(service))
+  }
+  return false
+}
+
+function selectRates(rates) {
+  return (rates || [])
+    .map(normalizeRate)
+    .filter((rate) => Number.isFinite(rate.amountCents) && isAllowedShippingRate(rate))
+    .sort((a, b) => a.amountCents - b.amountCents)
+}
+
 function readableError(error) {
   const message =
     error?.message ||
@@ -108,15 +150,12 @@ export async function createShipmentWithRates({ toAddress, fromAddress, parcel }
       parcel,
     })
 
-    const rates = (shipment.rates || [])
-      .map(normalizeRate)
-      .filter((rate) => Number.isFinite(rate.amountCents))
-      .sort((a, b) => a.amountCents - b.amountCents)
+    const rates = selectRates(shipment.rates)
 
     if (!rates.length) {
       throw new HttpError(
         422,
-        'No carrier rates were returned for that address. Double-check the address or choose warehouse pickup.',
+        'No tracked USPS, FedEx, or UPS rates were available for that address. Double-check the address or choose warehouse pickup.',
       )
     }
 
@@ -135,6 +174,12 @@ export async function buyLabel({ shipmentId, rateId }) {
       throw new HttpError(
         422,
         'That shipping rate has expired. Re-quote the shipment before buying a label.',
+      )
+    }
+    if (!isAllowedShippingRate(rate)) {
+      throw new HttpError(
+        422,
+        'That shipping service is not available. Please choose a tracked USPS, FedEx, or UPS option.',
       )
     }
 
@@ -158,7 +203,7 @@ export async function buyLabel({ shipmentId, rateId }) {
 export async function refreshRates(shipmentId) {
   try {
     const shipment = await getClient().Shipment.retrieve(shipmentId)
-    const rates = (shipment.rates || []).map(normalizeRate).sort((a, b) => a.amountCents - b.amountCents)
+    const rates = selectRates(shipment.rates)
     return { shipmentId: shipment.id, rates }
   } catch (error) {
     throw new HttpError(422, `Could not refresh shipping rates: ${readableError(error)}`)

@@ -219,7 +219,7 @@ export async function listProducts(req, res) {
         orderBy: [{ sortOrder: 'asc' }, { priceCents: 'asc' }],
       },
     },
-    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    orderBy: [{ name: 'asc' }],
   })
 
   res.json({ products: products.map(serializeProduct) })

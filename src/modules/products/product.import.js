@@ -120,7 +120,7 @@ function formatItemName(product, variant) {
 export async function buildInventoryTemplate() {
   const products = await prisma.product.findMany({
     include: { variants: { orderBy: [{ sortOrder: 'asc' }, { dose: 'asc' }] } },
-    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    orderBy: [{ name: 'asc' }],
   })
 
   const inventoryRows = [
