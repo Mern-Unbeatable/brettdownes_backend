@@ -127,11 +127,46 @@ export function isAllowedShippingRate(rate) {
   return false
 }
 
+function carrierRank(carrier) {
+  const token = normalizeToken(carrier)
+  if (token.includes('usps') || token === 'uspostal') return 0
+  if (token.includes('fedex')) return 1
+  if (token.includes('ups')) return 2
+  return 99
+}
+
+export function groupRatesByCarrier(rates) {
+  const grouped = new Map()
+  for (const rate of rates || []) {
+    const token = normalizeToken(rate?.carrier)
+    let label = 'Other'
+    if (token.includes('usps') || token === 'uspostal') label = 'USPS'
+    else if (token.includes('fedex')) label = 'FedEx'
+    else if (token.includes('ups')) label = 'UPS'
+    else label = rate?.carrier || 'Other'
+
+    if (!grouped.has(label)) grouped.set(label, [])
+    grouped.get(label).push(rate)
+  }
+
+  const order = ['USPS', 'FedEx', 'UPS']
+  return order
+    .filter((label) => grouped.has(label))
+    .map((label) => ({
+      carrier: label,
+      rates: grouped.get(label).sort((a, b) => a.amountCents - b.amountCents),
+    }))
+}
+
 function selectRates(rates) {
   return (rates || [])
     .map(normalizeRate)
     .filter((rate) => Number.isFinite(rate.amountCents) && isAllowedShippingRate(rate))
-    .sort((a, b) => a.amountCents - b.amountCents)
+    .sort((a, b) => {
+      const carrierDiff = carrierRank(a.carrier) - carrierRank(b.carrier)
+      if (carrierDiff !== 0) return carrierDiff
+      return a.amountCents - b.amountCents
+    })
 }
 
 function readableError(error) {

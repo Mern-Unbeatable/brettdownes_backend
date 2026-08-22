@@ -8,6 +8,10 @@ function normalizeName(value) {
     .replace(/\s+/g, ' ')
 }
 
+function normalizeBarcode(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
 function pickKey(keys, pattern) {
   return keys.find((key) => pattern.test(key))
 }
@@ -45,7 +49,7 @@ function readRows(buffer) {
 
   return rows
     .map((row, index) => {
-      const barcode = String(row[barcodeKey] || '').trim()
+      const barcode = normalizeBarcode(row[barcodeKey])
       const productName = productKey ? normalizeName(row[productKey]) : ''
       if (!barcode && !productName) return null
       if (!barcode) {
@@ -72,7 +76,7 @@ export async function importSpreadsheet(buffer) {
   })
 
   const byBarcode = new Map(
-    variants.map((variant) => [variant.barcode.trim().toLowerCase(), variant]),
+    variants.map((variant) => [normalizeBarcode(variant.barcode), variant]),
   )
 
   const summary = {
@@ -84,7 +88,7 @@ export async function importSpreadsheet(buffer) {
   const seen = new Set()
 
   for (const entry of entries) {
-    const variant = byBarcode.get(entry.barcode.toLowerCase())
+    const variant = byBarcode.get(normalizeBarcode(entry.barcode))
 
     if (!variant) {
       summary.notFound.push({
@@ -141,7 +145,7 @@ export async function buildInventoryTemplate() {
     [''],
     ['Columns'],
     ['Item name', 'Shown for reference (product + dose). Changing it does not rename the live product.'],
-    ['Item barcode', 'Required. Matches the variant. Do not change this value.'],
+    ['Item barcode', 'Required. Matches the variant (case-insensitive). Do not change this value.'],
     ['Quantity', 'Edit this. Enter the new on-hand count (0 or more).'],
     [''],
     ['Rules'],

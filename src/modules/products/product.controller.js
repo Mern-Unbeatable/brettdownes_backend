@@ -68,7 +68,7 @@ async function uniqueSlug(base, ignoreId) {
 }
 
 async function assertBarcodeAvailable(barcode, ignoreId) {
-  const value = String(barcode || '').trim()
+  const value = String(barcode || '').trim().toLowerCase()
   if (!value) throw badRequest('Every variant needs a barcode.')
   const clash = await prisma.variant.findFirst({
     where: {
