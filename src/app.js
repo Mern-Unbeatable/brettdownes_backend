@@ -32,12 +32,8 @@ export function createApp() {
 
   app.use(
     cors({
-      origin(origin, callback) {
-        // Same-origin requests and server-to-server calls send no Origin header.
-        if (!origin) return callback(null, true)
-        if (env.clientOrigins.includes(origin)) return callback(null, true)
-        callback(new Error(`Origin ${origin} is not allowed by CORS.`))
-      },
+      // Allow all origins (reflect request Origin so credentials still work).
+      origin: true,
       credentials: true,
       exposedHeaders: ['Content-Disposition', 'Content-Type'],
     }),
