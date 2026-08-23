@@ -16,6 +16,16 @@ export const registerSchema = z.object({
     .max(2000),
 })
 
+export const registerVerifySchema = z.object({
+  email,
+  otp: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, 'Enter the 6-digit code from your email.'),
+})
+
+export const registerResendSchema = z.object({ email })
+
 export const loginSchema = z.object({
   email,
   password: z.string().min(1, 'Enter your password.'),

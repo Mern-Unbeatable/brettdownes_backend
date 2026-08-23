@@ -125,6 +125,7 @@ const easypostServer = http.createServer(async (req, res) => {
 
 const BASE = `http://127.0.0.1:${API_PORT}`
 let cookie = ''
+let authToken = ''
 
 async function call(method, path, body) {
   const res = await fetch(`${BASE}${path}`, {
@@ -132,6 +133,7 @@ async function call(method, path, body) {
     headers: {
       ...(body ? { 'content-type': 'application/json' } : {}),
       ...(cookie ? { cookie } : {}),
+      ...(authToken ? { authorization: `Bearer ${authToken}` } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   })
@@ -148,6 +150,8 @@ async function call(method, path, body) {
   } catch {
     payload = { raw: text.slice(0, 200) }
   }
+
+  if (payload?.token) authToken = payload.token
 
   return { status: res.status, json: payload }
 }
@@ -169,15 +173,25 @@ async function main() {
   const email = `verify_${Date.now()}@example.com`
   const password = 'VerifyRun123'
 
-  // 1. Approval gating.
+  // 1. Approval gating (OTP → create PENDING user).
   console.log('Approval gating')
-  await call('POST', '/api/auth/register', {
+  const start = await call('POST', '/api/auth/register/start', {
     company: 'Verify Labs',
     email,
     password,
     phone: '5035550100',
     researchFramework: 'End-to-end verification run.',
   })
+  check('register start returns OTP in non-prod', Boolean(start.json.debugOtp), JSON.stringify(start.json))
+  const verified = await call('POST', '/api/auth/register/verify', {
+    email,
+    otp: start.json.debugOtp,
+  })
+  check(
+    'OTP verify creates pending user',
+    verified.status === 201 && verified.json.user?.status === 'PENDING',
+    `status ${verified.status}: ${verified.json.user?.status}`,
+  )
   const refused = await call('POST', '/api/auth/login', { email, password })
   check(
     'pending account cannot sign in',
@@ -357,6 +371,7 @@ async function main() {
   // 5. Admin buys the label.
   console.log('\nLabel purchase')
   cookie = ''
+  authToken = ''
   await call('POST', '/api/auth/login', {
     email: process.env.SEED_ADMIN_EMAIL || 'admin@peptideops.com',
     password: process.env.SEED_ADMIN_PASSWORD || 'PeptideOps1',

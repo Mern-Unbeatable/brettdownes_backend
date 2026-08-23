@@ -8,7 +8,9 @@ import {
   changePasswordSchema,
   forgotPasswordSchema,
   loginSchema,
+  registerResendSchema,
   registerSchema,
+  registerVerifySchema,
   resetPasswordSchema,
   updateProfileSchema,
 } from './auth.schemas.js'
@@ -21,7 +23,28 @@ const credentialLimit = rateLimit({
   message: 'Too many attempts. Please wait a few minutes and try again.',
 })
 
-router.post('/register', credentialLimit, validate(registerSchema), controller.register)
+const otpLimit = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 10,
+  message: 'Too many verification attempts. Please wait a few minutes and try again.',
+})
+
+router.post('/register/start', credentialLimit, validate(registerSchema), controller.registerStart)
+router.post(
+  '/register/verify',
+  otpLimit,
+  validate(registerVerifySchema),
+  controller.registerVerify,
+)
+router.post(
+  '/register/resend',
+  otpLimit,
+  validate(registerResendSchema),
+  controller.registerResend,
+)
+// Legacy alias — same as /register/start (OTP required before account creation).
+router.post('/register', credentialLimit, validate(registerSchema), controller.registerStart)
+
 router.post('/login', credentialLimit, validate(loginSchema), controller.login)
 router.post('/logout', controller.logout)
 router.get('/me', controller.me)

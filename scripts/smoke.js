@@ -5,6 +5,7 @@
 const BASE = process.env.SMOKE_BASE || 'http://localhost:4000'
 
 let cookie = ''
+let authToken = ''
 const results = []
 
 async function call(method, path, body, { expect } = {}) {
@@ -13,6 +14,7 @@ async function call(method, path, body, { expect } = {}) {
     headers: {
       ...(body ? { 'content-type': 'application/json' } : {}),
       ...(cookie ? { cookie } : {}),
+      ...(authToken ? { authorization: `Bearer ${authToken}` } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   })
@@ -30,6 +32,8 @@ async function call(method, path, body, { expect } = {}) {
   } catch {
     json = { raw: text.slice(0, 200) }
   }
+
+  if (json?.token) authToken = json.token
 
   const ok = expect ? res.status === expect : res.ok
   results.push({ ok, label: `${method} ${path}`, status: res.status, detail: ok ? '' : text.slice(0, 220) })
@@ -51,15 +55,20 @@ async function main() {
   const me0 = await call('GET', '/api/auth/me')
   log('anonymous user', JSON.stringify(me0.json.user))
 
-  // Registration while auto-approval is off should land in PENDING.
+  // Registration requires email OTP, then lands in PENDING when auto-approval is off.
   const email = `smoke_${Date.now()}@example.com`
-  const reg = await call('POST', '/api/auth/register', {
+  const start = await call('POST', '/api/auth/register/start', {
     company: 'Smoke Labs',
     email,
     password: 'SmokeTest123',
     phone: '5035550123',
     researchFramework: 'Automated API smoke test.',
   })
+  const otp = start.json.debugOtp
+  if (!otp) {
+    results.push({ ok: false, label: 'register OTP', status: 0, detail: 'debugOtp missing (non-prod only)' })
+  }
+  const reg = await call('POST', '/api/auth/register/verify', { email, otp })
   log('registered status', reg.json.user?.status)
 
   // A pending account must not be able to sign in.
@@ -113,6 +122,7 @@ async function main() {
   // Now act as the approved customer.
   await call('POST', '/api/auth/logout')
   cookie = ''
+  authToken = ''
   const customer = await call('POST', '/api/auth/login', { email, password: 'SmokeTest123' })
   log('customer login', customer.json.user?.email)
 

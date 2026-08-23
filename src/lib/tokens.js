@@ -45,3 +45,14 @@ export function createResetToken() {
 export function hashResetToken(raw) {
   return crypto.createHash('sha256').update(String(raw)).digest('hex')
 }
+
+/** 6-digit signup OTP; store only the hash. */
+export function createSignupOtp() {
+  const raw = String(crypto.randomInt(100000, 1000000))
+  const hash = crypto.createHash('sha256').update(raw).digest('hex')
+  return { raw, hash }
+}
+
+export function hashSignupOtp(raw) {
+  return crypto.createHash('sha256').update(String(raw).trim()).digest('hex')
+}

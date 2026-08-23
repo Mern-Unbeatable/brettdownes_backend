@@ -5,7 +5,9 @@ import { badRequest, conflict, forbidden, notFound, unauthorized } from '../../l
 import {
   clearSessionCookie,
   createResetToken,
+  createSignupOtp,
   hashResetToken,
+  hashSignupOtp,
   setSessionCookie,
   signSessionToken,
 } from '../../lib/tokens.js'
@@ -15,6 +17,8 @@ import { invalidateUserCache, PUBLIC_USER_FIELDS } from '../../middleware/auth.j
 import { getAdminRecipients, getSettings } from '../settings/settings.service.js'
 
 const RESET_TTL_MS = 1000 * 60 * 30
+const OTP_TTL_MS = 1000 * 60 * 10
+const OTP_MAX_ATTEMPTS = 5
 
 function publicUser(user) {
   return {
@@ -30,30 +34,23 @@ function publicUser(user) {
   }
 }
 
-export async function register(req, res) {
-  const { email, password, company, phone, researchFramework } = req.body
-  const name = req.body.name?.trim() || company
-
-  const existing = await prisma.user.findUnique({ where: { email } })
-  if (existing) {
-    throw conflict('An account with that email already exists. Try signing in instead.')
-  }
-
+async function finalizeRegistration(pending, res) {
   const settings = await getSettings()
-  const passwordHash = await bcrypt.hash(password, 12)
 
   const user = await prisma.user.create({
     data: {
-      email,
-      passwordHash,
-      name,
-      company,
-      phone: phone || null,
-      researchFramework,
+      email: pending.email,
+      passwordHash: pending.passwordHash,
+      name: pending.name,
+      company: pending.company,
+      phone: pending.phone || null,
+      researchFramework: pending.researchFramework,
       role: 'USER',
       status: settings.autoApproval ? 'ACTIVE' : 'PENDING',
     },
   })
+
+  await prisma.pendingRegistration.delete({ where: { id: pending.id } }).catch(() => {})
 
   if (settings.notifyNewRegistration) {
     const recipients = await getAdminRecipients(settings)
@@ -66,16 +63,145 @@ export async function register(req, res) {
     : templates.registrationPending(user)
   sendMail({ to: user.email, ...welcome })
 
-  // Auto-approved accounts are signed in immediately; pending ones are not.
   if (user.status === 'ACTIVE') {
-    setSessionCookie(res, signSessionToken(user))
-    return res.status(201).json({ user: publicUser(user), autoApproved: true })
+    const token = signSessionToken(user)
+    setSessionCookie(res, token)
+    return res.status(201).json({ user: publicUser(user), autoApproved: true, token })
   }
 
-  res.status(201).json({
+  return res.status(201).json({
     user: publicUser(user),
     autoApproved: false,
     message: 'Registration received. We will email you as soon as your access is approved.',
+  })
+}
+
+/** Step 1: store pending signup and email a 6-digit OTP. */
+export async function registerStart(req, res) {
+  const { email, password, company, phone, researchFramework } = req.body
+  const name = req.body.name?.trim() || company
+
+  const existing = await prisma.user.findUnique({ where: { email } })
+  if (existing) {
+    throw conflict('An account with that email already exists. Try signing in instead.')
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12)
+  const { raw, hash } = createSignupOtp()
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS)
+
+  await prisma.pendingRegistration.upsert({
+    where: { email },
+    create: {
+      email,
+      passwordHash,
+      name,
+      company,
+      phone: phone || null,
+      researchFramework,
+      otpHash: hash,
+      expiresAt,
+      attempts: 0,
+    },
+    update: {
+      passwordHash,
+      name,
+      company,
+      phone: phone || null,
+      researchFramework,
+      otpHash: hash,
+      expiresAt,
+      attempts: 0,
+    },
+  })
+
+  const mail = templates.registrationOtp(name, raw)
+  const delivery = await sendMail({ to: email, ...mail })
+  if (!delivery.sent && delivery.reason !== 'smtp-not-configured') {
+    throw badRequest('Could not send the verification email. Try again shortly.')
+  }
+
+  res.status(200).json({
+    ok: true,
+    pendingVerification: true,
+    email,
+    message: 'Check your email for a 6-digit verification code.',
+    ...(!env.isProd ? { debugOtp: raw } : {}),
+  })
+}
+
+/** Step 2: verify OTP, then create the user per autoApproval settings. */
+export async function registerVerify(req, res) {
+  const { email, otp } = req.body
+
+  const pending = await prisma.pendingRegistration.findUnique({ where: { email } })
+  if (!pending) {
+    throw badRequest('No pending registration for that email. Submit the form again.')
+  }
+
+  if (pending.expiresAt < new Date()) {
+    await prisma.pendingRegistration.delete({ where: { id: pending.id } }).catch(() => {})
+    throw badRequest('This verification code has expired. Request a new one.')
+  }
+
+  if (pending.attempts >= OTP_MAX_ATTEMPTS) {
+    throw badRequest('Too many incorrect codes. Request a new verification email.')
+  }
+
+  const otpHash = hashSignupOtp(otp)
+  if (otpHash !== pending.otpHash) {
+    await prisma.pendingRegistration.update({
+      where: { id: pending.id },
+      data: { attempts: { increment: 1 } },
+    })
+    throw badRequest('Incorrect verification code.')
+  }
+
+  const existing = await prisma.user.findUnique({ where: { email } })
+  if (existing) {
+    await prisma.pendingRegistration.delete({ where: { id: pending.id } }).catch(() => {})
+    throw conflict('An account with that email already exists. Try signing in instead.')
+  }
+
+  return finalizeRegistration(pending, res)
+}
+
+/** Resend OTP for an existing pending registration. */
+export async function registerResend(req, res) {
+  const { email } = req.body
+
+  const pending = await prisma.pendingRegistration.findUnique({ where: { email } })
+  if (!pending) {
+    // Same response whether missing or present to avoid account probing via this path.
+    return res.json({
+      ok: true,
+      message: 'If a registration is pending, a new code is on its way.',
+    })
+  }
+
+  const existing = await prisma.user.findUnique({ where: { email } })
+  if (existing) {
+    await prisma.pendingRegistration.delete({ where: { id: pending.id } }).catch(() => {})
+    throw conflict('An account with that email already exists. Try signing in instead.')
+  }
+
+  const { raw, hash } = createSignupOtp()
+  await prisma.pendingRegistration.update({
+    where: { id: pending.id },
+    data: {
+      otpHash: hash,
+      expiresAt: new Date(Date.now() + OTP_TTL_MS),
+      attempts: 0,
+    },
+  })
+
+  const mail = templates.registrationOtp(pending.name, raw)
+  await sendMail({ to: email, ...mail })
+
+  res.json({
+    ok: true,
+    message: 'If a registration is pending, a new code is on its way.',
+    ...(!env.isProd ? { debugOtp: raw } : {}),
   })
 }
 
@@ -98,8 +224,9 @@ export async function login(req, res) {
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
 
-  setSessionCookie(res, signSessionToken(user))
-  res.json({ user: publicUser(user) })
+  const token = signSessionToken(user)
+  setSessionCookie(res, token)
+  res.json({ user: publicUser(user), token })
 }
 
 export async function logout(req, res) {

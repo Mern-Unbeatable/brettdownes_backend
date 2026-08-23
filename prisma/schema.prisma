@@ -323,3 +323,21 @@ model PasswordResetToken {
 
   @@index([userId])
 }
+
+/// Pre-account signup waiting on email OTP verification.
+model PendingRegistration {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  passwordHash      String
+  name              String
+  company           String?
+  phone             String?
+  researchFramework String?
+  otpHash           String
+  expiresAt         DateTime
+  attempts          Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([expiresAt])
+}

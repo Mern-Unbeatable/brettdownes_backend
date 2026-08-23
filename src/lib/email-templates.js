@@ -62,6 +62,19 @@ function totals(order) {
 }
 
 export const templates = {
+  registrationOtp: (name, otp) => ({
+    subject: 'Your Peptide Ops verification code',
+    html: layout(
+      'Email verification',
+      paragraph(`Hi ${name},`) +
+        paragraph('Use this one-time code to finish creating your research account. It expires in 10 minutes.') +
+        `<p style="margin:20px 0;font-size:28px;font-weight:700;letter-spacing:0.28em;color:${BRAND.navy};">${otp}</p>` +
+        paragraph(
+          `<span style="color:${BRAND.muted};font-size:12px;">If you did not start a registration, you can ignore this email.</span>`,
+        ),
+    ),
+  }),
+
   registrationPending: (user) => ({
     subject: 'Your Peptide Ops registration is under review',
     html: layout(
