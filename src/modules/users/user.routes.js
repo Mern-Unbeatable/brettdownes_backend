@@ -60,17 +60,6 @@ function buildUserWhere({ search, status, role }) {
   }
 }
 
-/** Split "Jane Doe" into first/last for Mailchimp / Klaviyo style imports. */
-function splitName(fullName) {
-  const parts = String(fullName || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-  if (!parts.length) return { firstName: '', lastName: '' }
-  if (parts.length === 1) return { firstName: parts[0], lastName: '' }
-  return { firstName: parts[0], lastName: parts.slice(1).join(' ') }
-}
-
 function csvEscape(value) {
   const text = String(value ?? '')
   if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`
@@ -78,37 +67,46 @@ function csvEscape(value) {
 }
 
 /**
- * Mailchimp / Klaviyo / Constant Contact friendly CSV:
- * Email Address, First Name, Last Name, Phone, Company, Tags, Status, Signup Date
+ * Mailchimp / Klaviyo / Constant Contact friendly CSV.
+ * Members register with company / institution as their display name — not personal first/last.
  */
 function buildAudienceCsv(users) {
   const header = [
     'Email Address',
-    'First Name',
-    'Last Name',
+    'Company / Institution Name',
     'Phone',
-    'Company',
     'Tags',
     'Status',
     'Signup Date',
   ]
 
   const rows = users.map((user) => {
-    const { firstName, lastName } = splitName(user.name)
+    const institution =
+      String(user.name || '').trim() ||
+      String(user.company || '').trim()
+
     const tags = [
       user.role === 'ADMIN' ? 'Admin' : 'Member',
       user.status === 'ACTIVE' ? 'Active' : user.status === 'PENDING' ? 'Pending' : 'Blocked',
     ].join(', ')
 
+    // US-style date as plain text so Excel shows it (not ########).
+    const signupDate = user.createdAt
+      ? new Date(user.createdAt).toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          timeZone: 'UTC',
+        })
+      : ''
+
     return [
       user.email,
-      firstName,
-      lastName,
+      institution,
       user.phone || '',
-      user.company || '',
       tags,
       user.status,
-      user.createdAt ? new Date(user.createdAt).toISOString().slice(0, 10) : '',
+      signupDate,
     ]
       .map(csvEscape)
       .join(',')
