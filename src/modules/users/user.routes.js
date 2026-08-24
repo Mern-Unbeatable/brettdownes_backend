@@ -66,6 +66,24 @@ function csvEscape(value) {
   return text
 }
 
+function formatSignupDate(value) {
+  if (!value) return ''
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ]
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  const month = months[date.getUTCMonth()]
+  const year = date.getUTCFullYear()
+
+  // Word date + leading tab keeps Excel from turning it into a date serial
+  // (which shows as ######## when the column is narrow).
+  return `\t${month} ${day}, ${year}`
+}
+
 /**
  * Mailchimp / Klaviyo / Constant Contact friendly CSV.
  * Members register with company / institution as their display name — not personal first/last.
@@ -90,23 +108,13 @@ function buildAudienceCsv(users) {
       user.status === 'ACTIVE' ? 'Active' : user.status === 'PENDING' ? 'Pending' : 'Blocked',
     ].join(', ')
 
-    // US-style date as plain text so Excel shows it (not ########).
-    const signupDate = user.createdAt
-      ? new Date(user.createdAt).toLocaleDateString('en-US', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          timeZone: 'UTC',
-        })
-      : ''
-
     return [
       user.email,
       institution,
       user.phone || '',
       tags,
       user.status,
-      signupDate,
+      formatSignupDate(user.createdAt),
     ]
       .map(csvEscape)
       .join(',')
