@@ -15,6 +15,12 @@ const listQuerySchema = z.object({
   perPage: z.coerce.number().int().min(1).max(100).default(20),
 })
 
+const exportQuerySchema = z.object({
+  search: z.string().trim().max(120).optional(),
+  status: z.enum(['PENDING', 'ACTIVE', 'BLOCKED']).optional(),
+  role: z.enum(['USER', 'ADMIN']).optional(),
+})
+
 const statusSchema = z.object({ status: z.enum(['PENDING', 'ACTIVE', 'BLOCKED']) })
 const roleSchema = z.object({ role: z.enum(['USER', 'ADMIN']) })
 
@@ -37,19 +43,8 @@ function serialize(user) {
   return { ...rest, orderCount: _count?.orders ?? 0 }
 }
 
-/** Blocks an admin from locking themselves out or deleting their own account. */
-function assertNotSelf(req, id, action) {
-  if (req.user.id === id) throw badRequest(`You cannot ${action} your own account.`)
-}
-
-const router = Router()
-
-router.use(requireAdmin)
-
-router.get('/', validate(listQuerySchema, 'query'), async (req, res) => {
-  const { search, status, role, page, perPage } = req.validatedQuery
-
-  const where = {
+function buildUserWhere({ search, status, role }) {
+  return {
     deletedAt: null,
     ...(status ? { status } : {}),
     ...(role ? { role } : {}),
@@ -63,6 +58,108 @@ router.get('/', validate(listQuerySchema, 'query'), async (req, res) => {
         }
       : {}),
   }
+}
+
+/** Split "Jane Doe" into first/last for Mailchimp / Klaviyo style imports. */
+function splitName(fullName) {
+  const parts = String(fullName || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (!parts.length) return { firstName: '', lastName: '' }
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' }
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') }
+}
+
+function csvEscape(value) {
+  const text = String(value ?? '')
+  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`
+  return text
+}
+
+/**
+ * Mailchimp / Klaviyo / Constant Contact friendly CSV:
+ * Email Address, First Name, Last Name, Phone, Company, Tags, Status, Signup Date
+ */
+function buildAudienceCsv(users) {
+  const header = [
+    'Email Address',
+    'First Name',
+    'Last Name',
+    'Phone',
+    'Company',
+    'Tags',
+    'Status',
+    'Signup Date',
+  ]
+
+  const rows = users.map((user) => {
+    const { firstName, lastName } = splitName(user.name)
+    const tags = [
+      user.role === 'ADMIN' ? 'Admin' : 'Member',
+      user.status === 'ACTIVE' ? 'Active' : user.status === 'PENDING' ? 'Pending' : 'Blocked',
+    ].join(', ')
+
+    return [
+      user.email,
+      firstName,
+      lastName,
+      user.phone || '',
+      user.company || '',
+      tags,
+      user.status,
+      user.createdAt ? new Date(user.createdAt).toISOString().slice(0, 10) : '',
+    ]
+      .map(csvEscape)
+      .join(',')
+  })
+
+  // UTF-8 BOM helps Excel open the file correctly.
+  return `\uFEFF${[header.join(','), ...rows].join('\r\n')}\r\n`
+}
+
+/** Blocks an admin from locking themselves out or deleting their own account. */
+function assertNotSelf(req, id, action) {
+  if (req.user.id === id) throw badRequest(`You cannot ${action} your own account.`)
+}
+
+const router = Router()
+
+router.use(requireAdmin)
+
+router.get('/export', validate(exportQuerySchema, 'query'), async (req, res) => {
+  const { search, status, role } = req.validatedQuery
+  const where = buildUserWhere({ search, status, role })
+
+  const users = await prisma.user.findMany({
+    where,
+    select: {
+      email: true,
+      name: true,
+      company: true,
+      phone: true,
+      role: true,
+      status: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  const stamp = new Date().toISOString().slice(0, 10)
+  const csv = buildAudienceCsv(users)
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="peptide-ops-members-${stamp}.csv"`,
+  )
+  res.send(csv)
+})
+
+router.get('/', validate(listQuerySchema, 'query'), async (req, res) => {
+  const { search, status, role, page, perPage } = req.validatedQuery
+
+  const where = buildUserWhere({ search, status, role })
 
   const [users, total, counts] = await Promise.all([
     prisma.user.findMany({
