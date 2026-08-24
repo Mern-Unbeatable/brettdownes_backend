@@ -96,6 +96,24 @@ export const templates = {
     ),
   }),
 
+  adminLoginCredentials: ({ name, email, password }) => ({
+    subject: 'Your Peptide Ops admin login details',
+    html: layout(
+      'Admin access',
+      paragraph(`Hi ${name || 'there'},`) +
+        paragraph(
+          'Your administrator account for Peptide Ops Logistics is ready. Use the credentials below to sign in to the portal.',
+        ) +
+        paragraph(
+          `Email: <strong>${email}</strong><br />Password: <strong>${password}</strong>`,
+        ) +
+        button(`${env.clientUrl}/login`, 'Sign in to the portal') +
+        paragraph(
+          `<span style="color:${BRAND.muted};font-size:12px;">For security, change this password after your first sign-in and do not share these details.</span>`,
+        ),
+    ),
+  }),
+
   adminNewRegistration: (user) => ({
     subject: `New registration: ${user.email}`,
     html: layout(

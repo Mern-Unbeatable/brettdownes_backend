@@ -26,6 +26,16 @@ export async function resolveCart(lines) {
     }
 
     const qty = Math.max(1, Math.trunc(Number(line.qty) || 1))
+    const stock = Number(variant.stock ?? 0)
+
+    if (stock <= 0) {
+      throw badRequest(`${variant.product.name} (${variant.dose}) is out of stock.`)
+    }
+    if (qty > stock) {
+      throw badRequest(
+        `${variant.product.name} (${variant.dose}) only has ${stock} in stock.`,
+      )
+    }
 
     items.push({
       variantId: variant.id,
