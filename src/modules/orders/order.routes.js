@@ -15,6 +15,7 @@ import {
   calculateCouponDiscount,
   getActiveDiscountTiers,
 } from './discount.service.js'
+import { deductOrderStock, restoreOrderStock } from './inventory.service.js'
 import { ORDER_INCLUDE, ORDER_LIST_INCLUDE, serializeOrder } from './order.serializer.js'
 
 const createOrderSchema = z
@@ -209,6 +210,7 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
 
   // Pickup orders are confirmed immediately; card orders wait for /payments/confirm.
   if (paymentMethod === 'PICKUP') {
+    await deductOrderStock(order, { actorId: req.user.id })
     if (couponDiscount?.couponId) {
       await prisma.coupon.update({
         where: { id: couponDiscount.couponId },
@@ -277,6 +279,8 @@ router.post('/mine/:id/cancel', async (req, res) => {
     },
     include: ORDER_INCLUDE,
   })
+
+  await restoreOrderStock(updated, { actorId: req.user.id })
 
   res.json({ order: serializeOrder(updated) })
 })

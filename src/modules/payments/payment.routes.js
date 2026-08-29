@@ -11,6 +11,7 @@ import { templates } from '../../lib/email-templates.js'
 import { getAdminRecipients, getSettings } from '../settings/settings.service.js'
 import { removePurchasedCartItems } from '../cart/cart.service.js'
 import { purchaseOrderLabel } from '../orders/label.service.js'
+import { deductOrderStock } from '../orders/inventory.service.js'
 import { ORDER_INCLUDE, serializeOrder } from '../orders/order.serializer.js'
 
 const orderIdSchema = z.object({ orderId: z.string().min(1) })
@@ -63,6 +64,7 @@ async function markOrderPaid(orderId, { paymentIntentId } = {}) {
   })
 
   order = await buyPaidOrderLabel(order)
+  await deductOrderStock(order)
 
   if (order.couponCode) {
     await prisma.coupon.updateMany({

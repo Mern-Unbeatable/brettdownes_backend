@@ -7,6 +7,7 @@ import { validate } from '../../middleware/validate.js'
 import { sendMail } from '../../lib/mailer.js'
 import { templates } from '../../lib/email-templates.js'
 import { purchaseOrderLabel } from './label.service.js'
+import { deductOrderStock, restoreOrderStock } from './inventory.service.js'
 import { ORDER_INCLUDE, serializeOrder } from './order.serializer.js'
 
 const listQuerySchema = z.object({
@@ -201,6 +202,10 @@ router.patch('/:id/status', validate(statusSchema), async (req, res) => {
     include: ORDER_INCLUDE,
   })
 
+  if (status === 'CANCELLED' || status === 'REFUNDED') {
+    await restoreOrderStock(order, { actorId: req.user.id })
+  }
+
   if (notifyCustomer) {
     const mail =
       status === 'SHIPPED' ? templates.orderShipped(order) : templates.orderStatusChanged(order)
@@ -281,6 +286,13 @@ router.patch('/:id/payment', validate(paymentSchema), async (req, res) => {
     },
     include: ORDER_INCLUDE,
   })
+
+  // Pickup stock is reserved at order placement; refund restores it.
+  if (paymentStatus === 'REFUNDED') {
+    await restoreOrderStock(order, { actorId: req.user.id })
+  } else if (paymentStatus === 'PAID' && existing.paymentStatus !== 'PAID') {
+    await deductOrderStock(order, { actorId: req.user.id })
+  }
 
   res.json({ order: serializeOrder(order) })
 })
