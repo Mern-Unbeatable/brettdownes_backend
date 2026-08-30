@@ -20,10 +20,11 @@ export const ORDER_LIST_INCLUDE = {
   items: { include: ORDER_ITEM_INCLUDE },
 }
 
-/** Prefer the checkout snapshot; fall back to live variant/product image if blank. */
+/** Prefer live variant/product image so re-uploads still show; snapshot is last resort. */
 function resolveItemImage(item) {
-  if (item.image) return item.image
-  return item.variant?.image || item.variant?.product?.image || ''
+  const live = item.variant?.image || item.variant?.product?.image || ''
+  if (live) return live
+  return item.image || ''
 }
 
 export function serializeOrder(order) {
