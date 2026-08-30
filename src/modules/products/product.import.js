@@ -9,68 +9,110 @@ function normalizeName(value) {
 }
 
 function normalizeBarcode(value) {
-  return String(value || '').trim().toLowerCase()
+  // Excel may send barcodes as numbers; keep full string without scientific notation.
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value)
+  }
+  return String(value || '')
+    .trim()
+    .toLowerCase()
 }
 
 function pickKey(keys, pattern) {
-  return keys.find((key) => pattern.test(key))
+  return keys.find((key) => pattern.test(String(key || '').trim()))
 }
 
 function parseQuantity(raw, rowNumber) {
-  const quantity = Number.parseInt(String(raw ?? '').replace(/[^\d-]/g, ''), 10)
-  if (!Number.isFinite(quantity) || quantity < 0) {
-    throw badRequest(`Row ${rowNumber}: Quantity must be a whole number of 0 or more.`)
+  const text = String(raw ?? '').trim()
+  if (!text) {
+    return { ok: false, error: `Row ${rowNumber}: Quantity is empty.` }
   }
-  return quantity
+  const quantity = Number.parseInt(text.replace(/[^\d-]/g, ''), 10)
+  if (!Number.isFinite(quantity) || quantity < 0) {
+    return {
+      ok: false,
+      error: `Row ${rowNumber}: Quantity must be a whole number of 0 or more.`,
+    }
+  }
+  return { ok: true, quantity }
 }
 
 function readRows(buffer) {
-  const workbook = XLSX.read(buffer, { type: 'buffer' })
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, raw: false })
   const sheetName =
     workbook.SheetNames.find((name) => /goods|inventory|stock|qty|products/i.test(name)) ||
     workbook.SheetNames[0]
   if (!sheetName) throw badRequest('The spreadsheet has no sheets.')
 
-  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' })
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+    defval: '',
+    raw: false,
+  })
   if (!rows.length) throw badRequest('The inventory sheet is empty.')
 
   const keys = Object.keys(rows[0] || {})
   const barcodeKey =
-    pickKey(keys, /^(item\s*barcode|barcode|qr\s*code|qrcode)$/i) ||
-    pickKey(keys, /barcode|qr/i)
+    pickKey(keys, /^(item\s*barcode|barcode|qr\s*code|qrcode|sku)$/i) ||
+    pickKey(keys, /barcode|qr|sku/i)
   const productKey =
     pickKey(keys, /^(item\s*name|product|name)$/i) || pickKey(keys, /item\s*name|product|^name$/i)
   const qtyKey = pickKey(keys, /^(quantity|qty|stock)$/i) || pickKey(keys, /quantity|qty|stock/)
 
-  if (!qtyKey) throw badRequest('Add a Quantity column (Quantity / Qty / Stock).')
+  if (!qtyKey) {
+    throw badRequest(
+      'Add a Quantity column. Expected headers: Item name | Item barcode | Quantity',
+    )
+  }
   if (!barcodeKey) {
-    throw badRequest('Add an Item barcode column. Every variant row must include a barcode.')
+    throw badRequest(
+      'Add an Item barcode column. Expected headers: Item name | Item barcode | Quantity',
+    )
   }
 
-  return rows
-    .map((row, index) => {
-      const barcode = normalizeBarcode(row[barcodeKey])
-      const productName = productKey ? normalizeName(row[productKey]) : ''
-      if (!barcode && !productName) return null
-      if (!barcode) {
-        throw badRequest(`Row ${index + 2}: every variant needs a barcode.`)
-      }
-      return {
-        row: index + 2,
-        barcode,
-        productName,
-        quantity: parseQuantity(row[qtyKey], index + 2),
-      }
+  const entries = []
+  const rowErrors = []
+
+  rows.forEach((row, index) => {
+    const rowNumber = index + 2
+    const barcode = normalizeBarcode(row[barcodeKey])
+    const productName = productKey ? normalizeName(row[productKey]) : ''
+    if (!barcode && !productName) return
+
+    if (!barcode) {
+      rowErrors.push(`Row ${rowNumber}: barcode is missing.`)
+      return
+    }
+
+    const parsed = parseQuantity(row[qtyKey], rowNumber)
+    if (!parsed.ok) {
+      rowErrors.push(parsed.error)
+      return
+    }
+
+    entries.push({
+      row: rowNumber,
+      barcode,
+      productName,
+      quantity: parsed.quantity,
     })
-    .filter(Boolean)
+  })
+
+  if (!entries.length) {
+    const hint = rowErrors[0] ? ` ${rowErrors[0]}` : ''
+    throw badRequest(
+      `No valid inventory rows found.${hint} Use columns: Item name | Item barcode | Quantity.`,
+    )
+  }
+
+  return { entries, rowErrors }
 }
 
 /**
- * Updates on-hand quantity only. Rows match by barcode. Unknown barcodes are skipped.
- * Prices, photos, and names are never changed.
+ * Updates on-hand quantity only. Rows match by barcode (case-insensitive).
+ * Unknown barcodes and bad rows are reported — they do not block other updates.
  */
 export async function importSpreadsheet(buffer) {
-  const entries = readRows(buffer)
+  const { entries, rowErrors } = readRows(buffer)
   const variants = await prisma.variant.findMany({
     include: { product: { select: { id: true, name: true } } },
   })
@@ -83,6 +125,7 @@ export async function importSpreadsheet(buffer) {
     rows: entries.length,
     variantsUpdated: 0,
     notFound: [],
+    rowErrors,
   }
 
   const seen = new Set()
@@ -153,7 +196,8 @@ export async function buildInventoryTemplate() {
     ['2. Do not add extra header rows above Item name / Item barcode / Quantity.'],
     ['3. Leave Item barcode exactly as exported. That is how the site finds the product.'],
     ['4. Upload the saved .xlsx from Admin → Products → Import Excel.'],
-    ['5. If a barcode is not on the site yet, that row is skipped and listed in the upload result.'],
+    ['5. Unknown barcodes are listed in the upload result. Prices, photos, and descriptions stay the same.'],
+    ['6. Do not use the old SKU template (PO-BPC-5). The site matches Item barcode only (bpc5, mot10, etc.).'],
   ]
 
   const workbook = XLSX.utils.book_new()

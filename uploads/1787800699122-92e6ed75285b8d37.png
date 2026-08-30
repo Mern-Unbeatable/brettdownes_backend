@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/images/logo.png" />
+    <link rel="apple-touch-icon" href="/images/logo.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=overlays-content" />
+    <meta
+      name="description"
+      content="Research-grade lyophilized peptides with verified purity and certificates of analysis. Institutional access for qualified researchers. For Research Use Only."
+    />
+    <meta name="theme-color" content="#050b14" />
+    <title>Peptide Ops — Precision. Purity. Performance.</title>
+
+    <!-- Open Graph defaults (overridden per-route by react-helmet-async) -->
+    <meta property="og:site_name" content="Peptide Ops" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Peptide Ops — Precision. Purity. Performance." />
+    <meta
+      property="og:description"
+      content="Research-grade lyophilized peptides with verified purity and certificates of analysis. For Research Use Only."
+    />
+    <meta property="og:image" content="/images/logo.png" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-QFN9YZKM9G"></script>
+    <script>
+      window.dataLayer = window.dataLayer || []
+      function gtag() {
+        dataLayer.push(arguments)
+      }
+      gtag('js', new Date())
+      gtag('config', 'G-QFN9YZKM9G', { send_page_view: false })
+    </script>
+    <script type="module" crossorigin src="/assets/index-DE2ZrZ7v.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-B_IAKHgY.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
