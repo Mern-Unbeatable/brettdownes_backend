@@ -1,14 +1,29 @@
 import { toDollars } from '../../lib/money.js'
 
+const ORDER_ITEM_INCLUDE = {
+  variant: {
+    select: {
+      image: true,
+      product: { select: { image: true } },
+    },
+  },
+}
+
 export const ORDER_INCLUDE = {
-  items: true,
+  items: { include: ORDER_ITEM_INCLUDE },
   events: { orderBy: { createdAt: 'desc' } },
   user: { select: { id: true, name: true, email: true, company: true } },
 }
 
 /** List views only need line items — skips events/user and saves a remote DB RTT. */
 export const ORDER_LIST_INCLUDE = {
-  items: true,
+  items: { include: ORDER_ITEM_INCLUDE },
+}
+
+/** Prefer the checkout snapshot; fall back to live variant/product image if blank. */
+function resolveItemImage(item) {
+  if (item.image) return item.image
+  return item.variant?.image || item.variant?.product?.image || ''
 }
 
 export function serializeOrder(order) {
@@ -86,7 +101,7 @@ export function serializeOrder(order) {
       productName: item.productName,
       dose: item.dose,
       barcode: item.barcode,
-      image: item.image,
+      image: resolveItemImage(item),
       qty: item.qty,
       unitPriceCents: item.unitPriceCents,
       unitPrice: toDollars(item.unitPriceCents),
