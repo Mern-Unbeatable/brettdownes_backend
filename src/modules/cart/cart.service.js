@@ -42,6 +42,8 @@ export async function getUserCart(userId) {
 
 export async function removePurchasedCartItems(userId, variantIds) {
   const ids = [...new Set((variantIds || []).filter(Boolean))]
+
+  
   if (!userId || !ids.length) return
 
   await prisma.cartItem.deleteMany({
