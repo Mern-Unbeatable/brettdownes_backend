@@ -6,7 +6,7 @@
  *
  * Usage (from backend/):
  *   node scripts/download-uploads.js
- *   node scripts/download-uploads.js --api https://apibrett.maktechgroup.tech
+ *   node scripts/download-uploads.js --api https://api.peptideopslogistics.com
  *   node scripts/download-uploads.js --out ./downloads
  *
  * Requires DATABASE_URL (and optionally API_URL) in .env or the environment.
