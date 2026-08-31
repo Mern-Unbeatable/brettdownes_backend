@@ -2,10 +2,13 @@
  * Push every file in backend/uploads/ to a live (or remote) API,
  * keeping the same filenames so DB /uploads/... paths keep working.
  *
+ * Live site:  https://peptideopslogistics.com
+ * Live API:   https://api.peptideopslogistics.com
+ *
  * Usage (from backend/):
  *   node scripts/push-uploads.js
- *   node scripts/push-uploads.js --api https://apibrett.maktechgroup.tech
- *   node scripts/push-uploads.js --api https://apibrett.maktechgroup.tech --dir ./uploads
+ *   node scripts/push-uploads.js --api https://api.peptideopslogistics.com
+ *   node scripts/push-uploads.js --dir ./uploads
  *   node scripts/push-uploads.js --email admin@peptideops.com --password '...'
  *
  * Auth: admin login. Defaults to SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD from .env.
@@ -32,8 +35,9 @@ const MIME = {
 const BATCH_SIZE = 20
 
 function parseArgs(argv) {
+  // Prefer live API — local .env API_URL is usually localhost and is wrong for this script.
   const args = {
-    api: (process.env.API_URL || 'http://localhost:4000').replace(/\/$/, ''),
+    api: (process.env.LIVE_API_URL || 'https://api.peptideopslogistics.com').replace(/\/$/, ''),
     dir: path.join(backendRoot, 'uploads'),
     email: process.env.SEED_ADMIN_EMAIL || 'admin@peptideops.com',
     password: process.env.SEED_ADMIN_PASSWORD || '',
@@ -113,7 +117,7 @@ async function main() {
   if (args.help) {
     console.log(`Usage: node scripts/push-uploads.js [--api URL] [--dir DIR] [--email EMAIL] [--password PASS]
 
-  --api       Live API base (default: API_URL or http://localhost:4000)
+  --api       Live API base (default: LIVE_API_URL or https://api.peptideopslogistics.com)
   --dir       Local folder to push (default: backend/uploads)
   --email     Admin email (default: SEED_ADMIN_EMAIL)
   --password  Admin password (default: SEED_ADMIN_PASSWORD)
