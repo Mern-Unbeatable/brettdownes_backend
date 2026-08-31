@@ -16,7 +16,9 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "seed": "node prisma/seed.js"
+    "seed": "node prisma/seed.js",
+    "uploads:push": "node scripts/push-uploads.js",
+    "uploads:download": "node scripts/download-uploads.js"
   },
   "dependencies": {
     "@easypost/api": "^8.9.0",
