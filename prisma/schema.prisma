@@ -51,6 +51,10 @@ model User {
   company           String?
   phone             String?
   researchFramework String?
+  /// Free-text / select answer from signup ("How did you hear about us?").
+  heardAboutUs      String?
+  /// Account store credit in cents — set by admin; auto-applied at checkout.
+  creditCents       Int        @default(0)
   role              Role       @default(USER)
   status            UserStatus @default(PENDING)
   lastLoginAt       DateTime?
@@ -185,6 +189,8 @@ model Order {
   discountCents Int    @default(0)
   discountLabel String?
   couponCode    String?
+  /// Account credit applied to this order (cents). Deducted from the user balance.
+  creditCents   Int    @default(0)
   shippingCents Int    @default(0)
   totalCents    Int
   currency      String @default("usd")
@@ -333,6 +339,7 @@ model PendingRegistration {
   company           String?
   phone             String?
   researchFramework String?
+  heardAboutUs      String?
   otpHash           String
   expiresAt         DateTime
   attempts          Int      @default(0)

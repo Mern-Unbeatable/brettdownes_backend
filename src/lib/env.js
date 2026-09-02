@@ -58,6 +58,8 @@ export const env = {
       ? process.env.EASYPOST_API_KEY || process.env.EASYPOST_TEST_API_KEY || ''
       : process.env.EASYPOST_TEST_API_KEY || process.env.EASYPOST_API_KEY || '',
     baseUrl: process.env.EASYPOST_BASE_URL || '',
+    // Shared secret for EasyPost tracker webhooks + optional sync cron.
+    webhookSecret: process.env.EASYPOST_WEBHOOK_SECRET || '',
   },
 
   smtp: {

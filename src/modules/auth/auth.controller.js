@@ -28,6 +28,8 @@ function publicUser(user) {
     company: user.company,
     phone: user.phone,
     researchFramework: user.researchFramework,
+    heardAboutUs: user.heardAboutUs || null,
+    creditCents: user.creditCents ?? 0,
     role: user.role,
     status: user.status,
     createdAt: user.createdAt,
@@ -45,6 +47,7 @@ async function finalizeRegistration(pending, res) {
       company: pending.company,
       phone: pending.phone || null,
       researchFramework: pending.researchFramework,
+      heardAboutUs: pending.heardAboutUs || null,
       role: 'USER',
       status: settings.autoApproval ? 'ACTIVE' : 'PENDING',
     },
@@ -78,8 +81,9 @@ async function finalizeRegistration(pending, res) {
 
 /** Step 1: store pending signup and email a 6-digit OTP. */
 export async function registerStart(req, res) {
-  const { email, password, company, phone, researchFramework } = req.body
+  const { email, password, company, phone, researchFramework, heardAboutUs } = req.body
   const name = req.body.name?.trim() || company
+  const heard = String(heardAboutUs || '').trim() || null
 
   const existing = await prisma.user.findUnique({ where: { email } })
   if (existing) {
@@ -99,6 +103,7 @@ export async function registerStart(req, res) {
       company,
       phone: phone || null,
       researchFramework,
+      heardAboutUs: heard,
       otpHash: hash,
       expiresAt,
       attempts: 0,
@@ -109,6 +114,7 @@ export async function registerStart(req, res) {
       company,
       phone: phone || null,
       researchFramework,
+      heardAboutUs: heard,
       otpHash: hash,
       expiresAt,
       attempts: 0,

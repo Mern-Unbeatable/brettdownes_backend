@@ -23,6 +23,10 @@ const exportQuerySchema = z.object({
 
 const statusSchema = z.object({ status: z.enum(['PENDING', 'ACTIVE', 'BLOCKED']) })
 const roleSchema = z.object({ role: z.enum(['USER', 'ADMIN']) })
+const creditSchema = z.object({
+  // Admin sets an absolute dollar balance (e.g. 25.00 → 2500 cents).
+  creditDollars: z.coerce.number().min(0).max(100000),
+})
 
 const SELECT = {
   id: true,
@@ -31,6 +35,8 @@ const SELECT = {
   company: true,
   phone: true,
   researchFramework: true,
+  heardAboutUs: true,
+  creditCents: true,
   role: true,
   status: true,
   lastLoginAt: true,
@@ -38,9 +44,13 @@ const SELECT = {
   _count: { select: { orders: true } },
 }
 
-function serialize(user) {
+function serialize(user, extras = {}) {
   const { _count, ...rest } = user
-  return { ...rest, orderCount: _count?.orders ?? 0 }
+  return {
+    ...rest,
+    orderCount: _count?.orders ?? 0,
+    creditUsedCents: extras.creditUsedCents ?? 0,
+  }
 }
 
 function buildUserWhere({ search, status, role }) {
@@ -93,6 +103,7 @@ function buildAudienceCsv(users) {
     'Email Address',
     'Company / Institution Name',
     'Phone',
+    'How Did You Hear About Us',
     'Tags',
     'Status',
     'Signup Date',
@@ -112,6 +123,7 @@ function buildAudienceCsv(users) {
       user.email,
       institution,
       user.phone || '',
+      user.heardAboutUs || '',
       tags,
       user.status,
       formatSignupDate(user.createdAt),
@@ -144,6 +156,7 @@ router.get('/export', validate(exportQuerySchema, 'query'), async (req, res) => 
       name: true,
       company: true,
       phone: true,
+      heardAboutUs: true,
       role: true,
       status: true,
       createdAt: true,
@@ -183,8 +196,27 @@ router.get('/', validate(listQuerySchema, 'query'), async (req, res) => {
     }),
   ])
 
+  const userIds = users.map((user) => user.id)
+  const creditUsage =
+    userIds.length === 0
+      ? []
+      : await prisma.order.groupBy({
+          by: ['userId'],
+          where: {
+            userId: { in: userIds },
+            creditCents: { gt: 0 },
+            status: { notIn: ['CANCELLED', 'REFUNDED'] },
+          },
+          _sum: { creditCents: true },
+        })
+  const usedByUser = new Map(
+    creditUsage.map((row) => [row.userId, row._sum.creditCents || 0]),
+  )
+
   res.json({
-    users: users.map(serialize),
+    users: users.map((user) =>
+      serialize(user, { creditUsedCents: usedByUser.get(user.id) || 0 }),
+    ),
     total,
     page,
     perPage,
@@ -209,6 +241,7 @@ router.get('/:id', async (req, res) => {
           status: true,
           paymentStatus: true,
           totalCents: true,
+          creditCents: true,
           createdAt: true,
         },
         orderBy: { createdAt: 'desc' },
@@ -217,7 +250,19 @@ router.get('/:id', async (req, res) => {
     },
   })
   if (!user) throw notFound('Customer not found.')
-  res.json({ user: serialize(user) })
+
+  const usedAgg = await prisma.order.aggregate({
+    where: {
+      userId: user.id,
+      creditCents: { gt: 0 },
+      status: { notIn: ['CANCELLED', 'REFUNDED'] },
+    },
+    _sum: { creditCents: true },
+  })
+
+  res.json({
+    user: serialize(user, { creditUsedCents: usedAgg._sum.creditCents || 0 }),
+  })
 })
 
 router.patch('/:id/status', validate(statusSchema), async (req, res) => {
@@ -253,6 +298,34 @@ router.patch('/:id/role', validate(roleSchema), async (req, res) => {
   })
   invalidateUserCache(id)
   res.json({ user: serialize(user) })
+})
+
+router.patch('/:id/credit', validate(creditSchema), async (req, res) => {
+  const { id } = req.params
+  const creditCents = Math.round(Number(req.body.creditDollars) * 100)
+
+  const existing = await prisma.user.findFirst({ where: { id, deletedAt: null } })
+  if (!existing) throw notFound('Customer not found.')
+
+  const user = await prisma.user.update({
+    where: { id },
+    data: { creditCents },
+    select: SELECT,
+  })
+  invalidateUserCache(id)
+
+  const usedAgg = await prisma.order.aggregate({
+    where: {
+      userId: id,
+      creditCents: { gt: 0 },
+      status: { notIn: ['CANCELLED', 'REFUNDED'] },
+    },
+    _sum: { creditCents: true },
+  })
+
+  res.json({
+    user: serialize(user, { creditUsedCents: usedAgg._sum.creditCents || 0 }),
+  })
 })
 
 router.delete('/:id', async (req, res) => {

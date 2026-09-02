@@ -223,6 +223,7 @@ export async function buyLabel({ shipmentId, rateId }) {
     return {
       trackingCode: bought.tracking_code || null,
       trackingUrl: bought.tracker?.public_url || null,
+      trackerId: bought.tracker?.id || null,
       labelUrl: bought.postage_label?.label_url || null,
       carrier: rate.carrier,
       service: rate.service,
@@ -231,6 +232,29 @@ export async function buyLabel({ shipmentId, rateId }) {
   } catch (error) {
     if (error instanceof HttpError) throw error
     throw new HttpError(422, `Could not buy the shipping label: ${readableError(error)}`)
+  }
+}
+
+/** Looks up live carrier status for a tracking code (creates/retrieves EasyPost Tracker). */
+export async function fetchTrackerStatus({ trackingCode, carrier } = {}) {
+  const code = String(trackingCode || '').trim()
+  if (!code) {
+    throw new HttpError(400, 'A tracking code is required.')
+  }
+
+  try {
+    const payload = { tracking_code: code }
+    if (carrier) payload.carrier = carrier
+    const tracker = await getClient().Tracker.create(payload)
+    return {
+      id: tracker.id,
+      trackingCode: tracker.tracking_code || code,
+      status: tracker.status || null,
+      trackingUrl: tracker.public_url || null,
+      carrier: tracker.carrier || carrier || null,
+    }
+  } catch (error) {
+    throw new HttpError(422, `Could not refresh tracking: ${readableError(error)}`)
   }
 }
 

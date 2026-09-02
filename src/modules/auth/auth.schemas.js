@@ -9,6 +9,7 @@ export const registerSchema = z.object({
   email,
   password,
   phone: z.string().trim().max(40).optional().or(z.literal('')),
+  heardAboutUs: z.string().trim().max(120).optional().or(z.literal('')),
   researchFramework: z
     .string()
     .trim()

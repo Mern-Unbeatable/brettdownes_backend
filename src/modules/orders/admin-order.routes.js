@@ -2,13 +2,15 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { badRequest, notFound } from '../../lib/http-error.js'
-import { requireAdmin } from '../../middleware/auth.js'
+import { requireAdmin, invalidateUserCache } from '../../middleware/auth.js'
 import { validate } from '../../middleware/validate.js'
 import { sendMail } from '../../lib/mailer.js'
 import { templates } from '../../lib/email-templates.js'
 import { purchaseOrderLabel } from './label.service.js'
 import { deductOrderStock, restoreOrderStock } from './inventory.service.js'
+import { applyTrackerUpdate } from './tracking.service.js'
 import { ORDER_INCLUDE, serializeOrder } from './order.serializer.js'
+import { easypostEnabled, fetchTrackerStatus } from '../../lib/easypost.js'
 
 const listQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),
@@ -204,6 +206,15 @@ router.patch('/:id/status', validate(statusSchema), async (req, res) => {
 
   if (status === 'CANCELLED' || status === 'REFUNDED') {
     await restoreOrderStock(order, { actorId: req.user.id })
+
+    const alreadyClosed = existing.status === 'CANCELLED' || existing.status === 'REFUNDED'
+    if (!alreadyClosed && existing.creditCents > 0 && existing.userId) {
+      await prisma.user.update({
+        where: { id: existing.userId },
+        data: { creditCents: { increment: existing.creditCents } },
+      })
+      invalidateUserCache(existing.userId)
+    }
   }
 
   if (notifyCustomer) {
@@ -237,6 +248,41 @@ router.post('/:id/label/retry', async (req, res) => {
     })
     throw error
   }
+})
+
+/** Pulls live EasyPost tracker status and auto-advances to Delivered when due. */
+router.post('/:id/tracking/sync', async (req, res) => {
+  if (!easypostEnabled()) {
+    throw badRequest('EasyPost is not configured.')
+  }
+
+  const existing = await prisma.order.findUnique({ where: { id: req.params.id } })
+  if (!existing) throw notFound('Order not found.')
+  if (!existing.trackingCode) {
+    throw badRequest('This order does not have a tracking number yet.')
+  }
+
+  const tracker = await fetchTrackerStatus({
+    trackingCode: existing.trackingCode,
+    carrier: existing.carrier || undefined,
+  })
+  const applied = await applyTrackerUpdate({
+    trackingCode: tracker.trackingCode,
+    trackerStatus: tracker.status,
+    trackingUrl: tracker.trackingUrl,
+    carrier: tracker.carrier,
+  })
+
+  const order = await prisma.order.findUnique({
+    where: { id: existing.id },
+    include: ORDER_INCLUDE,
+  })
+
+  res.json({
+    order: serializeOrder(order),
+    tracker: { status: tracker.status, trackingUrl: tracker.trackingUrl },
+    applied,
+  })
 })
 
 /** Streams the purchased EasyPost label so admins can download it as a file. */

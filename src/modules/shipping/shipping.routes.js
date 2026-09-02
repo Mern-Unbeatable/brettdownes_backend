@@ -1,10 +1,19 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { env } from '../../lib/env.js'
+import { prisma } from '../../lib/prisma.js'
+import { unauthorized } from '../../lib/http-error.js'
 import { requireAuth } from '../../middleware/auth.js'
 import { validate } from '../../middleware/validate.js'
-import { buildParcel, createShipmentWithRates, easypostEnabled } from '../../lib/easypost.js'
+import {
+  buildParcel,
+  createShipmentWithRates,
+  easypostEnabled,
+  fetchTrackerStatus,
+} from '../../lib/easypost.js'
 import { getSettings } from '../settings/settings.service.js'
 import { resolveCart } from '../orders/cart.service.js'
+import { applyTrackerUpdate } from '../orders/tracking.service.js'
 
 const ratesSchema = z.object({
   items: z
@@ -27,10 +36,138 @@ const ratesSchema = z.object({
   }),
 })
 
+function assertWebhookSecret(req) {
+  const expected = env.easypost.webhookSecret
+  if (!expected) return
+  const provided =
+    req.query.secret ||
+    req.get('x-easypost-webhook-secret') ||
+    req.get('x-webhook-secret') ||
+    ''
+  if (provided !== expected) throw unauthorized('Invalid webhook secret.')
+}
+
+function extractTracker(body) {
+  if (!body || typeof body !== 'object') return null
+  const description = String(body.description || '')
+  const result = body.result && typeof body.result === 'object' ? body.result : null
+
+  if (result && (result.object === 'Tracker' || result.tracking_code)) {
+    return result
+  }
+  if (body.object === 'Tracker' || body.tracking_code) {
+    return body
+  }
+  if (description.startsWith('tracker.') && result) {
+    return result
+  }
+  return null
+}
+
 const router = Router()
 
 router.get('/status', requireAuth, (req, res) => {
   res.json({ enabled: easypostEnabled() })
+})
+
+/**
+ * EasyPost tracker webhook — when the carrier marks a package delivered,
+ * the matching order flips to DELIVERED automatically.
+ *
+ * Configure in EasyPost dashboard:
+ *   POST {API_URL}/api/shipping/easypost/webhook?secret={EASYPOST_WEBHOOK_SECRET}
+ * Subscribe to tracker.updated (and optionally tracker.created).
+ */
+router.post('/easypost/webhook', async (req, res) => {
+  assertWebhookSecret(req)
+
+  const tracker = extractTracker(req.body)
+  if (!tracker?.tracking_code) {
+    return res.json({ ok: true, ignored: true, reason: 'not-a-tracker-event' })
+  }
+
+  const result = await applyTrackerUpdate({
+    trackingCode: tracker.tracking_code,
+    trackerStatus: tracker.status,
+    trackingUrl: tracker.public_url || null,
+    carrier: tracker.carrier || null,
+  })
+
+  res.json({ ok: true, ...result })
+})
+
+/**
+ * Poll EasyPost for open shipped orders and apply delivered status.
+ * Useful as a backup when webhooks were missed.
+ * Auth: EASYPOST_WEBHOOK_SECRET query/header, or an admin session.
+ */
+router.post('/easypost/sync-tracking', async (req, res, next) => {
+  try {
+    const expected = env.easypost.webhookSecret
+    const provided =
+      req.query.secret ||
+      req.get('x-easypost-webhook-secret') ||
+      req.get('x-webhook-secret') ||
+      ''
+
+    const secretOk = expected && provided === expected
+    const adminOk = req.user?.role === 'ADMIN'
+    if (!secretOk && !adminOk) {
+      throw unauthorized('Admin session or webhook secret required.')
+    }
+
+    if (!easypostEnabled()) {
+      return res.json({ ok: true, synced: 0, message: 'EasyPost is not configured.' })
+    }
+
+    const orders = await prisma.order.findMany({
+      where: {
+        fulfillment: 'DELIVERY',
+        status: { in: ['PROCESSING', 'SHIPPED'] },
+        trackingCode: { not: null },
+      },
+      select: {
+        id: true,
+        trackingCode: true,
+        carrier: true,
+      },
+      take: 50,
+      orderBy: { shippedAt: 'asc' },
+    })
+
+    const results = []
+    for (const order of orders) {
+      try {
+        const tracker = await fetchTrackerStatus({
+          trackingCode: order.trackingCode,
+          carrier: order.carrier || undefined,
+        })
+        const applied = await applyTrackerUpdate({
+          trackingCode: tracker.trackingCode,
+          trackerStatus: tracker.status,
+          trackingUrl: tracker.trackingUrl,
+          carrier: tracker.carrier,
+        })
+        results.push({ orderId: order.id, trackerStatus: tracker.status, ...applied })
+      } catch (error) {
+        results.push({
+          orderId: order.id,
+          updated: false,
+          reason: 'tracker-error',
+          message: error.message,
+        })
+      }
+    }
+
+    res.json({
+      ok: true,
+      checked: results.length,
+      updated: results.filter((row) => row.updated).length,
+      results,
+    })
+  } catch (error) {
+    next(error)
+  }
 })
 
 router.post('/rates', requireAuth, validate(ratesSchema), async (req, res) => {

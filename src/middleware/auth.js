@@ -10,6 +10,8 @@ const PUBLIC_USER_FIELDS = {
   company: true,
   phone: true,
   researchFramework: true,
+  heardAboutUs: true,
+  creditCents: true,
   role: true,
   status: true,
   createdAt: true,
