@@ -99,10 +99,8 @@ function normalizeToken(value) {
 }
 
 /**
- * Only expose tracked USPS / FedEx / UPS services Brett selected:
- * USPS Priority Mail, Ground Advantage, Priority Mail Express
- * FedEx Ground, Home Delivery, 2Day
- * UPS Ground, 3 Day Select, 2nd Day Air
+ * Domestic: only Brett's tracked USPS / FedEx / UPS services.
+ * International: any tracked rate from those three carriers (EasyPost intl services).
  */
 const ALLOWED_SHIPPING = {
   usps: ['priority', 'groundadvantage', 'express', 'prioritymailexpress', 'expressmail'],
@@ -110,18 +108,26 @@ const ALLOWED_SHIPPING = {
   ups: ['ground', '3dayselect', '2nddayair', 'seconddayair'],
 }
 
-export function isAllowedShippingRate(rate) {
+export function isAllowedShippingRate(rate, { international = false } = {}) {
   const carrier = normalizeToken(rate?.carrier)
   const service = normalizeToken(rate?.service)
   if (!carrier || !service) return false
 
-  if (carrier.includes('usps') || carrier === 'uspostal') {
+  const isUsps = carrier.includes('usps') || carrier === 'uspostal'
+  const isFedex = carrier.includes('fedex')
+  const isUps = carrier.includes('ups')
+  if (!isUsps && !isFedex && !isUps) return false
+
+  // International destinations need Priority Mail International, Worldwide, etc.
+  if (international) return true
+
+  if (isUsps) {
     return ALLOWED_SHIPPING.usps.some((token) => service.includes(token) || token.includes(service))
   }
-  if (carrier.includes('fedex')) {
+  if (isFedex) {
     return ALLOWED_SHIPPING.fedex.some((token) => service.includes(token) || token.includes(service))
   }
-  if (carrier.includes('ups')) {
+  if (isUps) {
     return ALLOWED_SHIPPING.ups.some((token) => service.includes(token) || token.includes(service))
   }
   return false
@@ -158,10 +164,13 @@ export function groupRatesByCarrier(rates) {
     }))
 }
 
-function selectRates(rates) {
+function selectRates(rates, { international = false } = {}) {
   return (rates || [])
     .map(normalizeRate)
-    .filter((rate) => Number.isFinite(rate.amountCents) && isAllowedShippingRate(rate))
+    .filter(
+      (rate) =>
+        Number.isFinite(rate.amountCents) && isAllowedShippingRate(rate, { international }),
+    )
     .sort((a, b) => {
       const carrierDiff = carrierRank(a.carrier) - carrierRank(b.carrier)
       if (carrierDiff !== 0) return carrierDiff
@@ -185,16 +194,20 @@ export async function createShipmentWithRates({ toAddress, fromAddress, parcel }
       parcel,
     })
 
-    const rates = selectRates(shipment.rates)
+    const country = String(toAddress?.country || 'US').trim().toUpperCase()
+    const international = Boolean(country && country !== 'US')
+    const rates = selectRates(shipment.rates, { international })
 
     if (!rates.length) {
       throw new HttpError(
         422,
-        'No tracked USPS, FedEx, or UPS rates were available for that address. Double-check the address or choose warehouse pickup.',
+        international
+          ? 'No tracked USPS, FedEx, or UPS international rates were available for that address. Double-check the address or choose warehouse pickup.'
+          : 'No tracked USPS, FedEx, or UPS rates were available for that address. Double-check the address or choose warehouse pickup.',
       )
     }
 
-    return { shipmentId: shipment.id, rates }
+    return { shipmentId: shipment.id, rates, international }
   } catch (error) {
     if (error instanceof HttpError) throw error
     throw new HttpError(422, `Could not calculate shipping: ${readableError(error)}`)
@@ -211,7 +224,7 @@ export async function buyLabel({ shipmentId, rateId }) {
         'That shipping rate has expired. Re-quote the shipment before buying a label.',
       )
     }
-    if (!isAllowedShippingRate(rate)) {
+    if (!isAllowedShippingRate(rate, { international: true })) {
       throw new HttpError(
         422,
         'That shipping service is not available. Please choose a tracked USPS, FedEx, or UPS option.',
@@ -259,10 +272,10 @@ export async function fetchTrackerStatus({ trackingCode, carrier } = {}) {
 }
 
 /** Re-rates a stored shipment, used when a saved rate has gone stale. */
-export async function refreshRates(shipmentId) {
+export async function refreshRates(shipmentId, { international = false } = {}) {
   try {
     const shipment = await getClient().Shipment.retrieve(shipmentId)
-    const rates = selectRates(shipment.rates)
+    const rates = selectRates(shipment.rates, { international })
     return { shipmentId: shipment.id, rates }
   } catch (error) {
     throw new HttpError(422, `Could not refresh shipping rates: ${readableError(error)}`)

@@ -41,7 +41,7 @@ const createOrderSchema = z
         line2: z.string().trim().max(200).optional().or(z.literal('')),
         city: z.string().trim().min(1).max(120),
         state: z.string().trim().min(1).max(60),
-        zip: z.string().trim().min(3).max(20),
+        zip: z.string().trim().min(2).max(20),
         country: z.string().trim().length(2).default('US'),
       })
       .optional(),
@@ -103,7 +103,10 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
       subtotalCents >= settings.freeShippingThresholdCents
 
     // Re-read the rate from EasyPost so the client cannot dictate the shipping cost.
-    const { rates } = await refreshRates(body.shipmentId)
+    const shipCountry = String(body.address?.country || 'US').trim().toUpperCase()
+    const { rates } = await refreshRates(body.shipmentId, {
+      international: shipCountry !== 'US',
+    })
     const rate = rates.find((entry) => entry.id === body.rateId)
     if (!rate) {
       throw badRequest('That shipping rate has expired. Please recalculate shipping and try again.')
