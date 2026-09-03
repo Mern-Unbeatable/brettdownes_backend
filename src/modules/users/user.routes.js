@@ -27,6 +27,9 @@ const creditSchema = z.object({
   // Admin sets an absolute dollar balance (e.g. 25.00 → 2500 cents).
   creditDollars: z.coerce.number().min(0).max(100000),
 })
+const heardAboutSchema = z.object({
+  heardAboutUs: z.string().trim().max(120).optional().or(z.literal('')),
+})
 
 const SELECT = {
   id: true,
@@ -326,6 +329,22 @@ router.patch('/:id/credit', validate(creditSchema), async (req, res) => {
   res.json({
     user: serialize(user, { creditUsedCents: usedAgg._sum.creditCents || 0 }),
   })
+})
+
+router.patch('/:id/heard-about', validate(heardAboutSchema), async (req, res) => {
+  const { id } = req.params
+  const heardAboutUs = String(req.body.heardAboutUs || '').trim() || null
+
+  const existing = await prisma.user.findFirst({ where: { id, deletedAt: null } })
+  if (!existing) throw notFound('Customer not found.')
+
+  const user = await prisma.user.update({
+    where: { id },
+    data: { heardAboutUs },
+    select: SELECT,
+  })
+  invalidateUserCache(id)
+  res.json({ user: serialize(user) })
 })
 
 router.delete('/:id', async (req, res) => {
