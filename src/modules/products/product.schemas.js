@@ -8,15 +8,23 @@ const slug = z
   .max(120)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Slug may only contain lowercase letters, numbers and dashes.')
 
-export const PRODUCT_CATEGORIES = ['Peptides', 'Blends']
+export const PRODUCT_CATEGORIES = ['Peptides', 'Blends', 'Other']
+
+/** Categories eligible for the 25% full-kit bulk reward. */
+export const KIT_DISCOUNT_CATEGORIES = ['Peptides', 'Blends']
 
 export function normalizeCategory(value) {
   const raw = String(value || '').trim().toLowerCase()
   if (raw.includes('blend')) return 'Blends'
+  if (raw.includes('other')) return 'Other'
   return 'Peptides'
 }
 
-const category = z.preprocess(normalizeCategory, z.enum(['Peptides', 'Blends']))
+export function isKitDiscountCategory(category) {
+  return KIT_DISCOUNT_CATEGORIES.includes(normalizeCategory(category))
+}
+
+const category = z.preprocess(normalizeCategory, z.enum(['Peptides', 'Blends', 'Other']))
 
 export const variantInputSchema = z.object({
   dose: z.string().trim().min(1, 'Dose is required.').max(60),

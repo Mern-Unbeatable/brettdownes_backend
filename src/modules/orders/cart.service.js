@@ -41,6 +41,7 @@ export async function resolveCart(lines) {
       variantId: variant.id,
       productId: variant.productId,
       productName: variant.product.name,
+      category: variant.product.category,
       slug: variant.product.slug,
       dose: variant.dose,
       barcode: variant.barcode,

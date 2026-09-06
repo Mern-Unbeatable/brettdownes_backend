@@ -1,10 +1,22 @@
 import { prisma } from '../../lib/prisma.js'
 import { badRequest } from '../../lib/http-error.js'
+import { isKitDiscountCategory } from '../products/product.schemas.js'
 
-/** A full kit is qty 10+ of one cart line, or any line explicitly labeled as a kit. */
+/** Explicit kit label, or qty 10+ of one cart line — Peptides & Blends only. */
 function isKit(item) {
+  if (!isKitDiscountCategory(item.category)) return false
+  // Safety net: bacteriostatic water never gets kit pricing even if miscategorized.
+  if (
+    /bacteriostatic/i.test(
+      `${item.productName || item.name || ''} ${item.dose || ''} ${item.barcode || ''}`,
+    )
+  ) {
+    return false
+  }
   if (Number(item.qty) >= 10) return true
-  return /\bkit\b/i.test(`${item.productName || ''} ${item.dose || ''} ${item.barcode || ''}`)
+  return /\bkit\b/i.test(
+    `${item.productName || item.name || ''} ${item.dose || ''} ${item.barcode || ''}`,
+  )
 }
 
 export async function getActiveDiscountTiers() {
@@ -78,7 +90,8 @@ export async function calculateCouponDiscount(items, code, { throwOnInvalid = tr
 /**
  * Calculates every eligible reward and applies only the one producing the
  * largest discount. ORDER rewards affect the entire subtotal; KIT rewards
- * affect full-kit lines only (qty 10+ of one item, or items labeled as a kit).
+ * affect full-kit lines only (qty 10+ / kit-labeled), limited to Peptides
+ * and Blends — never Other (e.g. bacteriostatic water).
  */
 export function calculateBulkDiscount(items, tiers = []) {
   const subtotalCents = items.reduce(
