@@ -31,9 +31,9 @@ const spreadsheetUpload = multer({
   },
 })
 
-// The storefront sits behind the portal gate, so the catalogue requires a session.
+// Full catalogue stays behind the portal; homepage featured teaser is public (glass-locked in UI).
 router.get('/', requireAuth, validate(productQuerySchema, 'query'), controller.listProducts)
-router.get('/featured', requireAuth, controller.listFeaturedProducts)
+router.get('/featured', controller.listFeaturedProducts)
 router.get('/import/template', requireAdmin, async (req, res) => {
   const buffer = await buildInventoryTemplate()
   res.setHeader(
