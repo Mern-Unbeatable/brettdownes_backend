@@ -146,7 +146,9 @@ export const templates = {
       paragraph(`Hi ${order.contactName},`) +
         paragraph(
           order.fulfillment === 'PICKUP'
-            ? 'We received your order. Payment is due at pickup — bring this confirmation with you.'
+            ? order.paymentStatus === 'PAID'
+              ? 'We received your order and card payment. Bring this confirmation and photo ID when you collect your order.'
+              : 'We received your order. Payment is due at pickup — bring this confirmation with you.'
             : 'We received your order and payment. You will get a tracking number as soon as your label is created.',
         ) +
         itemsTable(order.items) +

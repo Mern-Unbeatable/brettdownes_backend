@@ -100,7 +100,7 @@ router.post('/checkout-session', requireAuth, validate(orderIdSchema), async (re
   if (!order) throw notFound('Order not found.')
   if (order.paymentStatus === 'PAID') throw badRequest('This order has already been paid.')
   if (order.paymentMethod !== 'STRIPE') {
-    throw badRequest('This order is set to warehouse pickup and is paid on collection.')
+    throw badRequest('This order is set to pay in person at pickup.')
   }
   if (order.status === 'CANCELLED') throw badRequest('This order was cancelled.')
 

@@ -53,6 +53,8 @@ const createOrderSchema = z
     /** When true, apply available account credit to merchandise only (not shipping). */
     applyCredit: z.boolean().default(false),
     saveAddress: z.boolean().default(false),
+    /** Pickup only: STRIPE (card now or later) or PICKUP (pay in person). */
+    paymentMethod: z.enum(['STRIPE', 'PICKUP']).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.fulfillment === 'PICKUP') {
@@ -148,7 +150,8 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
       ? Math.min(available, dueMerchandiseCents)
       : 0
     const totalCents = Math.max(0, orderTotalBeforeCredit - creditCents)
-    const paymentMethod = body.fulfillment === 'PICKUP' ? 'PICKUP' : 'STRIPE'
+    const paymentMethod =
+      body.fulfillment === 'PICKUP' && body.paymentMethod === 'PICKUP' ? 'PICKUP' : 'STRIPE'
     const coveredByCredit = totalCents === 0 && creditCents > 0
 
     if (creditCents > 0) {
@@ -221,9 +224,11 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
               ? `Order placed and paid in full with $${(creditCents / 100).toFixed(2)} account credit.`
               : paymentMethod === 'PICKUP'
                 ? `Order placed for pickup at ${pickupLocation.name}, payment due on collection.`
-                : creditCents > 0
-                  ? `Order placed with $${(creditCents / 100).toFixed(2)} account credit on merchandise, awaiting card payment.`
-                  : 'Order placed, awaiting card payment.',
+                : body.fulfillment === 'PICKUP'
+                  ? `Order placed for pickup at ${pickupLocation.name}, awaiting card payment.`
+                  : creditCents > 0
+                    ? `Order placed with $${(creditCents / 100).toFixed(2)} account credit on merchandise, awaiting card payment.`
+                    : 'Order placed, awaiting card payment.',
           },
         },
       },
