@@ -197,4 +197,19 @@ export const templates = {
         button(`${env.clientUrl}/dashboard/orders`, 'View your orders'),
     ),
   }),
+
+  accountCredit: ({ name, addedCents, balanceCents }) => ({
+    subject: `${formatMoney(addedCents)} account credit added`,
+    html: layout(
+      'Account credit',
+      paragraph(`Hi ${name},`) +
+        paragraph(
+          `We added <strong>${formatMoney(addedCents)}</strong> of account credit to your Peptide Ops account.`,
+        ) +
+        paragraph(
+          `Your available balance is now <strong>${formatMoney(balanceCents)}</strong>. Use it at checkout on products. It does not cover shipping.`,
+        ) +
+        button(`${env.clientUrl}/dashboard`, 'View your dashboard'),
+    ),
+  }),
 }

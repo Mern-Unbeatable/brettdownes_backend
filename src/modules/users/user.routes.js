@@ -317,6 +317,18 @@ router.patch('/:id/credit', validate(creditSchema), async (req, res) => {
   })
   invalidateUserCache(id)
 
+  const addedCents = user.creditCents - (existing.creditCents || 0)
+  if (addedCents > 0 && existing.email) {
+    sendMail({
+      to: existing.email,
+      ...templates.accountCredit({
+        name: existing.name || 'there',
+        addedCents,
+        balanceCents: user.creditCents,
+      }),
+    })
+  }
+
   const usedAgg = await prisma.order.aggregate({
     where: {
       userId: id,

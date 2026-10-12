@@ -297,6 +297,10 @@ router.get('/mine', async (req, res) => {
   })
 
   const paid = orders.filter((order) => order.paymentStatus === 'PAID')
+  const account = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { creditCents: true },
+  })
 
   res.json({
     orders: orders.map(serializeOrder),
@@ -305,6 +309,7 @@ router.get('/mine', async (req, res) => {
       inTransit: orders.filter((order) => order.status === 'SHIPPED').length,
       delivered: orders.filter((order) => order.status === 'DELIVERED').length,
       spentCents: paid.reduce((sum, order) => sum + order.totalCents, 0),
+      creditCents: Math.max(0, account?.creditCents || 0),
     },
   })
 })
