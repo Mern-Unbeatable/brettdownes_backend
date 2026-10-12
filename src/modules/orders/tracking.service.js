@@ -98,3 +98,80 @@ export async function applyTrackerUpdate({
     to: nextStatus,
   }
 }
+
+function scanStamp(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toISOString().slice(0, 19)
+}
+
+function scanMessage(scan) {
+  const place = [scan.city, scan.state].filter(Boolean).join(', ')
+  const text = scan.message || scan.status || ''
+  return [text, place].filter(Boolean).join(' — ')
+}
+
+/**
+ * Writes new carrier scans onto the order timeline and marks the order
+ * delivered when USPS, UPS, or FedEx says the package was delivered.
+ */
+export async function applyCarrierScans(order, snapshot) {
+  const existing = await prisma.orderEvent.findMany({
+    where: { orderId: order.id, type: 'TRACKING' },
+    select: { message: true, createdAt: true },
+  })
+  const seen = new Set(existing.map((event) => `${event.message}|${scanStamp(event.createdAt)}`))
+  const fresh = []
+
+  for (const scan of snapshot.events || []) {
+    const message = scanMessage(scan)
+    if (!message) continue
+    const createdAt = scan.datetime ? new Date(scan.datetime) : new Date()
+    const when = Number.isNaN(createdAt.getTime()) ? new Date() : createdAt
+    const key = `${message}|${scanStamp(when)}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    fresh.push({ message, createdAt: when })
+  }
+
+  const nextStatus = mapTrackerToOrderStatus(snapshot.status)
+  const rank = { PENDING: 0, PROCESSING: 1, SHIPPED: 2, DELIVERED: 3 }
+  const advance =
+    nextStatus &&
+    !CLOSED.has(order.status) &&
+    (rank[nextStatus] || 0) > (rank[order.status] || 0)
+
+  if (!fresh.length && !advance) {
+    return { added: 0, status: order.status }
+  }
+
+  const updated = await prisma.order.update({
+    where: { id: order.id },
+    data: {
+      ...(advance ? { status: nextStatus } : {}),
+      ...(snapshot.carrier && !order.carrier ? { carrier: snapshot.carrier } : {}),
+      ...(fresh.length
+        ? {
+            events: {
+              create: fresh.map((event) => ({
+                type: 'TRACKING',
+                message: event.message,
+                createdAt: event.createdAt,
+              })),
+            },
+          }
+        : {}),
+    },
+    include: ORDER_INCLUDE,
+  })
+
+  if (advance && nextStatus === 'DELIVERED') {
+    sendMail({ to: updated.contactEmail, ...templates.orderStatusChanged(updated) })
+  }
+
+  return {
+    added: fresh.length,
+    status: updated.status,
+    from: order.status,
+  }
+}

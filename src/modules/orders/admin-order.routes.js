@@ -8,9 +8,19 @@ import { sendMail } from '../../lib/mailer.js'
 import { templates } from '../../lib/email-templates.js'
 import { purchaseOrderLabel } from './label.service.js'
 import { deductOrderStock, restoreOrderStock } from './inventory.service.js'
-import { applyTrackerUpdate } from './tracking.service.js'
+import { applyCarrierScans } from './tracking.service.js'
 import { ORDER_INCLUDE, serializeOrder } from './order.serializer.js'
-import { easypostEnabled, fetchTrackerStatus } from '../../lib/easypost.js'
+import { fetchCarrierTracking } from '../../lib/easypost.js'
+import multer from 'multer'
+import {
+  applyManualTracking,
+  applyTrackingSheet,
+  buildPirateShipSheet,
+  listNewOrders,
+  queueNumberFor,
+  serializeNewOrder,
+  withParcel,
+} from './new-orders.js'
 
 const listQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),
@@ -25,6 +35,10 @@ const listQuerySchema = z.object({
 const statusSchema = z.object({
   status: z.enum(['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED']),
   notifyCustomer: z.boolean().default(true),
+})
+
+const trackingSchema = z.object({
+  trackingCode: z.string().trim().min(4, 'Paste a tracking number.').max(40),
 })
 
 const paymentSchema = z.object({
@@ -52,9 +66,51 @@ function detectLabelFile(url, headerType, buffer) {
   return { contentType: type || 'image/png', extension: 'png' }
 }
 
+const trackingUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
+  fileFilter(req, file, cb) {
+    const name = String(file.originalname || '').toLowerCase()
+    const ok =
+      name.endsWith('.xlsx') ||
+      name.endsWith('.xls') ||
+      name.endsWith('.csv') ||
+      name.endsWith('.ods') ||
+      file.mimetype.includes('sheet') ||
+      file.mimetype.includes('excel') ||
+      file.mimetype === 'text/csv'
+    if (!ok) return cb(badRequest('Upload an Excel or CSV tracking file.'))
+    cb(null, true)
+  },
+})
+
 const router = Router()
 
 router.use(requireAdmin)
+
+router.get('/new', async (req, res) => {
+  const orders = await listNewOrders()
+  res.json({ orders, total: orders.length })
+})
+
+router.get('/new/export', async (req, res) => {
+  const orders = await listNewOrders()
+  if (!orders.length) throw badRequest('There are no new orders to export.')
+  const buffer = buildPirateShipSheet(orders)
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
+  res.setHeader('Content-Disposition', 'attachment; filename="pirate-ship-new-orders.xlsx"')
+  res.send(buffer)
+})
+
+router.post('/new/tracking', trackingUpload.single('file'), async (req, res) => {
+  if (!req.file?.buffer) throw badRequest('Choose a spreadsheet to upload.')
+  const result = await applyTrackingSheet(req.file.buffer, { actorId: req.user.id })
+  const orders = await listNewOrders()
+  res.json({ ...result, orders, total: orders.length })
+})
 
 router.get('/', validate(listQuerySchema, 'query'), async (req, res) => {
   const { search, userId, status, paymentStatus, fulfillment, page, perPage } = req.validatedQuery
@@ -168,7 +224,11 @@ router.get('/:id', async (req, res) => {
     include: ORDER_INCLUDE,
   })
   if (!order) throw notFound('Order not found.')
-  res.json({ order: serializeOrder(order) })
+  const queueNumber = await queueNumberFor(order)
+  const serialized = queueNumber
+    ? serializeNewOrder(order, queueNumber)
+    : withParcel(order, serializeOrder(order))
+  res.json({ order: serialized })
 })
 
 router.patch('/:id/status', validate(statusSchema), async (req, res) => {
@@ -183,7 +243,7 @@ router.patch('/:id/status', validate(statusSchema), async (req, res) => {
     const allowed = new Set(['DELIVERED', 'CANCELLED', 'REFUNDED'])
     if (!allowed.has(status)) {
       throw badRequest(
-        'Delivery order status updates automatically (Processing after payment, Shipped when the label is bought). You can only mark Delivered, Cancelled, or Refunded here.',
+        'Delivery order status updates automatically (Processing after payment, Shipped when tracking is uploaded). You can only mark Delivered, Cancelled, or Refunded here.',
       )
     }
   }
@@ -250,29 +310,33 @@ router.post('/:id/label/retry', async (req, res) => {
   }
 })
 
-/** Pulls live EasyPost tracker status and auto-advances to Delivered when due. */
-router.post('/:id/tracking/sync', async (req, res) => {
-  if (!easypostEnabled()) {
-    throw badRequest('EasyPost is not configured.')
-  }
+/** Saves a tracking number pasted on the order detail page. */
+router.post('/:id/tracking', validate(trackingSchema), async (req, res) => {
+  const existing = await prisma.order.findUnique({
+    where: { id: req.params.id },
+    include: ORDER_INCLUDE,
+  })
+  if (!existing) throw notFound('Order not found.')
 
+  const order = await applyManualTracking(existing, req.body.trackingCode, {
+    actorId: req.user.id,
+  })
+  res.json({ order: serializeOrder(order) })
+})
+
+/** Pulls live USPS/UPS scans onto the timeline and marks Delivered when the carrier does. */
+router.post('/:id/tracking/sync', async (req, res) => {
   const existing = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!existing) throw notFound('Order not found.')
   if (!existing.trackingCode) {
     throw badRequest('This order does not have a tracking number yet.')
   }
 
-  const tracker = await fetchTrackerStatus({
+  const snapshot = await fetchCarrierTracking({
     trackingCode: existing.trackingCode,
-    carrier: existing.carrier || undefined,
+    carrier: `${existing.carrier || ''} ${existing.service || ''}`,
   })
-  const applied = await applyTrackerUpdate({
-    trackingCode: tracker.trackingCode,
-    trackerStatus: tracker.status,
-    trackingUrl: tracker.trackingUrl,
-    carrier: tracker.carrier,
-  })
-
+  const applied = await applyCarrierScans(existing, snapshot)
   const order = await prisma.order.findUnique({
     where: { id: existing.id },
     include: ORDER_INCLUDE,
@@ -280,7 +344,7 @@ router.post('/:id/tracking/sync', async (req, res) => {
 
   res.json({
     order: serializeOrder(order),
-    tracker: { status: tracker.status, trackingUrl: tracker.trackingUrl },
+    tracker: { status: snapshot.status, carrier: snapshot.carrier },
     applied,
   })
 })
@@ -341,6 +405,29 @@ router.patch('/:id/payment', validate(paymentSchema), async (req, res) => {
   }
 
   res.json({ order: serializeOrder(order) })
+})
+
+/** Removes the order. Stock and unused account credit are returned first. */
+router.delete('/:id', async (req, res) => {
+  const existing = await prisma.order.findUnique({
+    where: { id: req.params.id },
+    include: ORDER_INCLUDE,
+  })
+  if (!existing) throw notFound('Order not found.')
+
+  await restoreOrderStock(existing, { actorId: req.user.id })
+
+  const alreadyClosed = existing.status === 'CANCELLED' || existing.status === 'REFUNDED'
+  if (!alreadyClosed && existing.creditCents > 0 && existing.userId) {
+    await prisma.user.update({
+      where: { id: existing.userId },
+      data: { creditCents: { increment: existing.creditCents } },
+    })
+    invalidateUserCache(existing.userId)
+  }
+
+  await prisma.order.delete({ where: { id: existing.id } })
+  res.status(204).end()
 })
 
 export default router

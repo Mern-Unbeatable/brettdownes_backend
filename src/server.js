@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { createApp, uploadsDir } from './app.js'
 import { env } from './lib/env.js'
 import { prisma } from './lib/prisma.js'
+import { startTrackingPoller } from './modules/orders/tracking-poller.js'
 
 fs.mkdirSync(uploadsDir, { recursive: true })
 
@@ -16,8 +17,11 @@ const server = app.listen(env.port, () => {
   console.log(`[api] Peptide Ops API listening on ${env.apiUrl} (${env.nodeEnv})`)
 })
 
+const stopTrackingPoller = startTrackingPoller()
+
 async function shutdown(signal) {
   console.log(`[api] ${signal} received, shutting down.`)
+  stopTrackingPoller()
   server.close(async () => {
     await prisma.$disconnect()
     process.exit(0)

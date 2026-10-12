@@ -16,7 +16,6 @@ import {
   getActiveDiscountTiers,
 } from './discount.service.js'
 import { deductOrderStock, restoreOrderStock } from './inventory.service.js'
-import { purchaseOrderLabel } from './label.service.js'
 import { ORDER_INCLUDE, ORDER_LIST_INCLUDE, serializeOrder } from './order.serializer.js'
 
 const createOrderSchema = z
@@ -137,9 +136,11 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
 
   const dueMerchandiseCents = Math.max(0, subtotalCents - discountCents)
   const orderTotalBeforeCredit = dueMerchandiseCents + shippingCents
+  const orderNumber = await nextOrderNumber()
 
   // Atomically reserve account credit so concurrent checkouts cannot overspend it.
   // Credit reduces merchandise only — shipping / pickup fees stay payable.
+  // Remote Postgres often needs more than Prisma's 5s interactive timeout.
   const order = await prisma.$transaction(async (tx) => {
     const account = await tx.user.findUnique({
       where: { id: req.user.id },
@@ -166,7 +167,7 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
 
     return tx.order.create({
       data: {
-        orderNumber: await nextOrderNumber(),
+        orderNumber,
         userId: req.user.id,
         status: coveredByCredit ? 'PROCESSING' : 'PENDING',
         paymentStatus: coveredByCredit ? 'PAID' : 'UNPAID',
@@ -234,7 +235,7 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
       },
       include: ORDER_INCLUDE,
     })
-  })
+  }, { maxWait: 10000, timeout: 20000 })
 
   if (order.creditCents > 0) {
     invalidateUserCache(req.user.id)
@@ -262,21 +263,9 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
   if (paymentMethod === 'PICKUP' || coveredByCredit) {
     let finalized = order
     if (coveredByCredit && order.fulfillment === 'DELIVERY' && !order.labelUrl) {
-      try {
-        finalized = await purchaseOrderLabel(order)
-      } catch (error) {
-        console.error(
-          `[shipping] Automatic label purchase failed for credit-paid order ${order.orderNumber}:`,
-          error,
-        )
-        await prisma.orderEvent.create({
-          data: {
-            orderId: order.id,
-            type: 'LABEL_FAILED',
-            message: `Automatic label purchase failed: ${error.message || 'Unknown carrier error'}`,
-          },
-        })
-      }
+      // Pirate Ship fulfillment: do not buy an EasyPost label. Quotes still run at checkout.
+      // Restore automatic labels by uncommenting:
+      // finalized = await purchaseOrderLabel(order)
     }
 
     await deductOrderStock(finalized, { actorId: req.user.id })

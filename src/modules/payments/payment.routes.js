@@ -44,6 +44,8 @@ async function buyPaidOrderLabel(order) {
   }
 }
 
+void buyPaidOrderLabel
+
 /** Marks an order paid exactly once and fires the confirmation emails. */
 async function markOrderPaid(orderId, { paymentIntentId } = {}) {
   const existing = await prisma.order.findUnique({ where: { id: orderId } })
@@ -63,7 +65,9 @@ async function markOrderPaid(orderId, { paymentIntentId } = {}) {
     include: ORDER_INCLUDE,
   })
 
-  order = await buyPaidOrderLabel(order)
+  // Pirate Ship fulfillment: EasyPost quotes stay at checkout, but labels are not bought here.
+  // Restore automatic labels by uncommenting the next line.
+  // order = await buyPaidOrderLabel(order)
   await deductOrderStock(order)
 
   if (order.couponCode) {

@@ -248,6 +248,61 @@ export async function buyLabel({ shipmentId, rateId }) {
   }
 }
 
+let trackingClient = null
+
+function getTrackingClient() {
+  if (!env.easypost.trackingApiKey) {
+    throw new HttpError(503, 'Live carrier tracking is not configured.')
+  }
+  if (!trackingClient) trackingClient = new EasyPostClient(env.easypost.trackingApiKey)
+  return trackingClient
+}
+
+function easypostCarrier(carrier, trackingCode) {
+  const token = String(carrier || '').toLowerCase()
+  const code = String(trackingCode || '').trim()
+  if (token.includes('usps') || token.includes('postal') || /^(94|93|92|91)\d{18,}$/.test(code)) {
+    return 'USPS'
+  }
+  if (/^1Z/i.test(code) || token.includes('ups')) return 'UPS'
+  if (token.includes('fedex')) return 'FedEx'
+  return undefined
+}
+
+/**
+ * Reads USPS, UPS, or FedEx scan history for a real tracking number.
+ * Uses the live tracking key. Does not buy a label.
+ */
+export async function fetchCarrierTracking({ trackingCode, carrier } = {}) {
+  const code = String(trackingCode || '').trim()
+  if (!code) throw new HttpError(400, 'A tracking code is required.')
+
+  try {
+    const payload = { tracking_code: code }
+    const named = easypostCarrier(carrier, code)
+    if (named) payload.carrier = named
+    const tracker = await getTrackingClient().Tracker.create(payload)
+    const events = (tracker.tracking_details || [])
+      .map((event) => ({
+        status: event.status || '',
+        message: event.message || '',
+        datetime: event.datetime || null,
+        city: event.tracking_location?.city || '',
+        state: event.tracking_location?.state || '',
+      }))
+      .filter((event) => event.message || event.status)
+
+    return {
+      trackingCode: tracker.tracking_code || code,
+      status: tracker.status || null,
+      carrier: tracker.carrier || named || null,
+      events,
+    }
+  } catch (error) {
+    throw new HttpError(422, `Could not read carrier tracking: ${readableError(error)}`)
+  }
+}
+
 /** Looks up live carrier status for a tracking code (creates/retrieves EasyPost Tracker). */
 export async function fetchTrackerStatus({ trackingCode, carrier } = {}) {
   const code = String(trackingCode || '').trim()

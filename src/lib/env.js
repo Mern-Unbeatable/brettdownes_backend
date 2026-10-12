@@ -57,6 +57,8 @@ export const env = {
     apiKey: isProd
       ? process.env.EASYPOST_API_KEY || process.env.EASYPOST_TEST_API_KEY || ''
       : process.env.EASYPOST_TEST_API_KEY || process.env.EASYPOST_API_KEY || '',
+    // Real USPS/UPS numbers. The test key rejects them. Quotes in development stay on the test key.
+    trackingApiKey: process.env.EASYPOST_API_KEY || '',
     baseUrl: process.env.EASYPOST_BASE_URL || '',
     // Shared secret for EasyPost tracker webhooks + optional sync cron.
     webhookSecret: process.env.EASYPOST_WEBHOOK_SECRET || '',
