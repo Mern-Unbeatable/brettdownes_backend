@@ -330,6 +330,39 @@ model PasswordResetToken {
   @@index([userId])
 }
 
+/// A category tab on the private wholesale price list (e.g. Oil, Tablets).
+model WholesaleCategory {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products WholesaleProduct[]
+
+  @@index([sortOrder])
+}
+
+/// A single row in the wholesale price list. Prices are integer cents.
+model WholesaleProduct {
+  id         String   @id @default(uuid())
+  categoryId String
+  catNo      String   @default("")
+  name       String   @default("")
+  strength   String   @default("")
+  vialSize   String   @default("")
+  priceCents Int      @default(0)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  category WholesaleCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([categoryId])
+  @@index([sortOrder])
+}
+
 /// Pre-account signup waiting on email OTP verification.
 model PendingRegistration {
   id                String   @id @default(uuid())
