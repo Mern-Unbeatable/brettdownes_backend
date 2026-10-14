@@ -21,6 +21,7 @@ import paymentRoutes from './modules/payments/payment.routes.js'
 import uploadRoutes from './modules/uploads/upload.routes.js'
 import discountRoutes from './modules/discounts/discount.routes.js'
 import coaRoutes from './modules/coa/coa.routes.js'
+import wholesaleRoutes from './modules/wholesale/wholesale.routes.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 export const uploadsDir = path.resolve(here, '..', 'uploads')
@@ -64,6 +65,7 @@ export function createApp() {
   app.use('/api/uploads', uploadRoutes)
   app.use('/api/discounts', discountRoutes)
   app.use('/api/coa', coaRoutes)
+  app.use('/api/wholesale', wholesaleRoutes)
 
   app.use(notFoundHandler)
   app.use(errorHandler)
