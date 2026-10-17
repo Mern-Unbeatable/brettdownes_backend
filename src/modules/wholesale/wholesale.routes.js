@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import multer from 'multer'
 import { requireAdmin } from '../../middleware/auth.js'
 import { validate } from '../../middleware/validate.js'
 import { rateLimit } from '../../middleware/rate-limit.js'
@@ -51,8 +52,29 @@ import {
   updateWholesaleOrderStatus,
   verifyAccessPassword,
 } from './wholesale.service.js'
+import {
+  buildWholesaleInventoryTemplate,
+  importWholesaleSpreadsheet,
+} from './wholesale.import.js'
 
 const router = Router()
+
+const spreadsheetUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
+  fileFilter(req, file, cb) {
+    const name = String(file.originalname || '').toLowerCase()
+    const ok =
+      name.endsWith('.xlsx') ||
+      name.endsWith('.xls') ||
+      name.endsWith('.csv') ||
+      file.mimetype.includes('sheet') ||
+      file.mimetype.includes('excel') ||
+      file.mimetype === 'text/csv'
+    if (!ok) return cb(badRequest('Upload an Excel (.xlsx) or CSV inventory file.'))
+    cb(null, true)
+  },
+})
 
 const unlockThrottle = rateLimit({
   windowMs: 60_000,
@@ -226,6 +248,34 @@ router.patch(
 router.delete('/admin/products/:id', requireAdmin, async (req, res) => {
   const result = await deleteProduct(req.params.id)
   res.json(result)
+})
+
+router.get('/admin/import/template', requireAdmin, async (req, res) => {
+  const buffer = await buildWholesaleInventoryTemplate()
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
+  res.setHeader('Content-Disposition', 'attachment; filename="peptide-ops-other-inventory.xlsx"')
+  res.send(buffer)
+})
+
+router.post('/admin/import', requireAdmin, (req, res, next) => {
+  spreadsheetUpload.single('file')(req, res, async (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return next(badRequest('Spreadsheet must be smaller than 8MB.'))
+      }
+      return next(err)
+    }
+    try {
+      if (!req.file?.buffer) throw badRequest('No spreadsheet was uploaded.')
+      const result = await importWholesaleSpreadsheet(req.file.buffer)
+      res.json(result)
+    } catch (error) {
+      next(error)
+    }
+  })
 })
 
 /* ---- Admin: "Other" store orders ---------------------------------- */

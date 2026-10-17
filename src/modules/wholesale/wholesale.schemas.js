@@ -28,6 +28,8 @@ export const productCreateSchema = z.object({
   strength: z.string().trim().max(120).optional().default(''),
   vialSize: z.string().trim().max(160).optional().default(''),
   price: z.coerce.number().min(0).max(1000000).optional().default(0),
+  barcode: z.string().trim().max(80).optional().default(''),
+  stock: z.coerce.number().int().min(0).max(1000000).optional().default(0),
   inStock: z.coerce.boolean().optional(),
   sortOrder: z.coerce.number().int().min(0).max(100000).optional(),
 })
@@ -40,6 +42,8 @@ export const productUpdateSchema = z
     strength: z.string().trim().max(120).optional(),
     vialSize: z.string().trim().max(160).optional(),
     price: z.coerce.number().min(0).max(1000000).optional(),
+    barcode: z.string().trim().max(80).optional(),
+    stock: z.coerce.number().int().min(0).max(1000000).optional(),
     inStock: z.coerce.boolean().optional(),
     sortOrder: z.coerce.number().int().min(0).max(100000).optional(),
   })

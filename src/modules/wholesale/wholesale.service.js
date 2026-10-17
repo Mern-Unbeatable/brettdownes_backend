@@ -42,16 +42,19 @@ async function uniqueCategorySlug(base, ignoreId) {
 }
 
 export function serializeWholesaleProduct(product) {
+  const stock = Math.max(0, Number(product.stock) || 0)
   return {
     id: product.id,
     categoryId: product.categoryId,
     catNo: product.catNo,
+    barcode: product.barcode || '',
     name: product.name,
     strength: product.strength,
     vialSize: product.vialSize,
     price: toDollars(product.priceCents),
     priceCents: product.priceCents,
-    inStock: product.inStock,
+    stock,
+    inStock: stock > 0,
     sortOrder: product.sortOrder,
   }
 }
@@ -194,7 +197,14 @@ function productWriteData(input) {
   if (input.vialSize !== undefined) data.vialSize = String(input.vialSize).trim()
   if (input.price !== undefined) data.priceCents = toCents(input.price)
   if (input.priceCents !== undefined) data.priceCents = Math.round(Number(input.priceCents) || 0)
-  if (input.inStock !== undefined) data.inStock = Boolean(input.inStock)
+  if (input.barcode !== undefined) data.barcode = String(input.barcode || '').trim()
+  if (input.stock !== undefined) {
+    data.stock = Math.max(0, Math.trunc(Number(input.stock) || 0))
+    data.inStock = data.stock > 0
+  } else if (input.inStock !== undefined) {
+    data.inStock = Boolean(input.inStock)
+    if (!data.inStock) data.stock = 0
+  }
   if (input.sortOrder !== undefined) data.sortOrder = input.sortOrder
   return data
 }
@@ -352,10 +362,17 @@ async function resolveWholesaleItems(lines) {
   for (const line of lines) {
     const product = byId.get(String(line.id))
     if (!product) throw badRequest('One of the items is no longer available.')
-    if (!product.inStock) {
-      throw badRequest(`${product.name || product.catNo} is out of stock.`)
+    const onHand = Math.max(0, Number(product.stock) || 0)
+    const label = product.name || product.catNo || 'Item'
+    if (onHand < 1) {
+      throw badRequest(`${label} is out of stock.`)
     }
     const qty = Math.max(1, Math.trunc(Number(line.qty) || 1))
+    if (qty > onHand) {
+      throw badRequest(
+        `${label} only has ${onHand} in stock. Remove extra quantity and try again.`,
+      )
+    }
     items.push({
       // productId/category let the shared coupon calculator run; private-store
       // ids never match main-shop product coupons, so only "all products"
@@ -478,6 +495,7 @@ export async function createPendingWholesaleOrder(input) {
       notes: input.notes || null,
       items: {
         create: items.map((item) => ({
+          productId: item.productId,
           catNo: item.catNo,
           productName: item.productName,
           strength: item.strength,
@@ -507,6 +525,92 @@ export async function attachWholesaleSession(orderId, sessionId) {
   })
 }
 
+const DEDUCT_EVENT = 'INVENTORY_DEDUCT'
+const RESTORE_EVENT = 'INVENTORY_RESTORE'
+
+async function deductWholesaleStock(order) {
+  if (!order?.id || !order.items?.length) return
+  const already = await prisma.wholesaleOrderEvent.findFirst({
+    where: { orderId: order.id, type: DEDUCT_EVENT },
+    select: { id: true },
+  })
+  if (already) return
+
+  const lines = order.items.filter((item) => item.productId && item.qty > 0)
+  if (!lines.length) {
+    await prisma.wholesaleOrderEvent.create({
+      data: {
+        orderId: order.id,
+        type: DEDUCT_EVENT,
+        message: 'Inventory not reduced (no catalogue product ids on this order).',
+      },
+    })
+    return
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const item of lines) {
+      const updated = await tx.wholesaleProduct.updateMany({
+        where: { id: item.productId, stock: { gte: item.qty } },
+        data: { stock: { decrement: item.qty } },
+      })
+      if (updated.count === 0) {
+        await tx.$executeRaw`
+          UPDATE "WholesaleProduct"
+          SET stock = GREATEST(0, stock - ${item.qty})
+          WHERE id = ${item.productId}
+        `
+      }
+      await tx.$executeRaw`
+        UPDATE "WholesaleProduct"
+        SET "inStock" = (stock > 0)
+        WHERE id = ${item.productId}
+      `
+    }
+
+    await tx.wholesaleOrderEvent.create({
+      data: {
+        orderId: order.id,
+        type: DEDUCT_EVENT,
+        message: `Inventory reduced for ${lines.length} line${lines.length === 1 ? '' : 's'}.`,
+      },
+    })
+  })
+}
+
+async function restoreWholesaleStock(order) {
+  if (!order?.id || !order.items?.length) return
+  const deducted = await prisma.wholesaleOrderEvent.findFirst({
+    where: { orderId: order.id, type: DEDUCT_EVENT },
+    select: { id: true },
+  })
+  if (!deducted) return
+  const already = await prisma.wholesaleOrderEvent.findFirst({
+    where: { orderId: order.id, type: RESTORE_EVENT },
+    select: { id: true },
+  })
+  if (already) return
+
+  const lines = order.items.filter((item) => item.productId && item.qty > 0)
+  if (!lines.length) return
+
+  await prisma.$transaction(async (tx) => {
+    for (const item of lines) {
+      await tx.wholesaleProduct.updateMany({
+        where: { id: item.productId },
+        data: { stock: { increment: item.qty }, inStock: true },
+      })
+    }
+    await tx.wholesaleOrderEvent.create({
+      data: {
+        orderId: order.id,
+        type: RESTORE_EVENT,
+        message: `Inventory restored for ${lines.length} line${lines.length === 1 ? '' : 's'}.`,
+      },
+    })
+  })
+}
+
 /** Marks a wholesale order paid exactly once. Returns the order or null if already paid. */
 export async function markWholesaleOrderPaid(orderId) {
   const result = await prisma.wholesaleOrder.updateMany({
@@ -526,6 +630,7 @@ export async function markWholesaleOrderPaid(orderId) {
         message: 'Stripe payment received. Order marked processing.',
       },
     })
+    await deductWholesaleStock(paid)
   }
   return prisma.wholesaleOrder.findUnique({
     where: { id: orderId },
@@ -630,7 +735,10 @@ export async function listWholesaleOrders({
 }
 
 export async function updateWholesaleOrderStatus(id, status) {
-  const existing = await prisma.wholesaleOrder.findUnique({ where: { id } })
+  const existing = await prisma.wholesaleOrder.findUnique({
+    where: { id },
+    include: WHOLESALE_ORDER_INCLUDE,
+  })
   if (!existing) throw notFound('Order not found.')
   const order = await prisma.wholesaleOrder.update({
     where: { id },
@@ -641,11 +749,18 @@ export async function updateWholesaleOrderStatus(id, status) {
     },
     include: WHOLESALE_ORDER_INCLUDE,
   })
+  if (status === 'CANCELLED' || status === 'REFUNDED') {
+    await restoreWholesaleStock(order)
+    return getWholesaleOrder(id)
+  }
   return order
 }
 
 export async function updateWholesaleOrderPayment(id, paymentStatus) {
-  const existing = await prisma.wholesaleOrder.findUnique({ where: { id } })
+  const existing = await prisma.wholesaleOrder.findUnique({
+    where: { id },
+    include: WHOLESALE_ORDER_INCLUDE,
+  })
   if (!existing) throw notFound('Order not found.')
   const order = await prisma.wholesaleOrder.update({
     where: { id },
@@ -656,6 +771,14 @@ export async function updateWholesaleOrderPayment(id, paymentStatus) {
     },
     include: WHOLESALE_ORDER_INCLUDE,
   })
+  if (paymentStatus === 'PAID' && existing.paymentStatus !== 'PAID') {
+    await deductWholesaleStock(order)
+    return getWholesaleOrder(id)
+  }
+  if (paymentStatus === 'REFUNDED') {
+    await restoreWholesaleStock(order)
+    return getWholesaleOrder(id)
+  }
   return order
 }
 
@@ -692,8 +815,12 @@ export async function setWholesaleOrderTracking(id, { trackingCode, carrier, tra
 }
 
 export async function deleteWholesaleOrder(id) {
-  const existing = await prisma.wholesaleOrder.findUnique({ where: { id } })
+  const existing = await prisma.wholesaleOrder.findUnique({
+    where: { id },
+    include: WHOLESALE_ORDER_INCLUDE,
+  })
   if (!existing) throw notFound('Order not found.')
+  await restoreWholesaleStock(existing)
   await prisma.wholesaleOrder.delete({ where: { id } })
   return { ok: true }
 }

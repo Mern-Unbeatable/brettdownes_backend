@@ -353,7 +353,11 @@ model WholesaleProduct {
   strength   String   @default("")
   vialSize   String   @default("")
   priceCents Int      @default(0)
-  /// When false the item still lists but is "out of stock" (order via WhatsApp).
+  /// On-hand count. 0 = out of stock (customers can still request via WhatsApp).
+  stock      Int      @default(0)
+  /// Optional code for Excel import (same column as main-shop Item barcode). Falls back to catNo.
+  barcode    String   @default("")
+  /// Kept in sync with stock > 0 for older clients.
   inStock    Boolean  @default(true)
   sortOrder  Int      @default(0)
   createdAt  DateTime @default(now())
@@ -425,6 +429,8 @@ model WholesaleOrderEvent {
 model WholesaleOrderItem {
   id          String @id @default(uuid())
   orderId     String
+  // Live catalogue id so paid orders can deduct / restore stock. Null on older rows.
+  productId   String?
   // Snapshot so historical orders survive catalog edits/deletions.
   catNo       String @default("")
   productName String
