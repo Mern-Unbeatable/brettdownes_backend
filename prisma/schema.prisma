@@ -353,6 +353,8 @@ model WholesaleProduct {
   strength   String   @default("")
   vialSize   String   @default("")
   priceCents Int      @default(0)
+  /// When false the item still lists but is "out of stock" (order via WhatsApp).
+  inStock    Boolean  @default(true)
   sortOrder  Int      @default(0)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -361,6 +363,79 @@ model WholesaleProduct {
 
   @@index([categoryId])
   @@index([sortOrder])
+}
+
+/// A guest order placed from the private /other store. No user account needed.
+model WholesaleOrder {
+  id            String        @id @default(uuid())
+  orderNumber   String        @unique
+  status        OrderStatus   @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID)
+
+  subtotalCents Int
+  discountCents Int    @default(0)
+  couponCode    String?
+  shippingCents Int    @default(0)
+  totalCents    Int
+  currency      String @default("usd")
+
+  shippingLabel String? // Name of the delivery option the customer chose.
+
+  contactName  String
+  contactEmail String
+  contactPhone String
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  state        String
+  zip          String
+  country      String  @default("US")
+  notes        String?
+
+  stripeSessionId String?
+  trackingCode    String?
+  trackingUrl     String?
+  carrier         String?
+  shippedAt       DateTime?
+  paidAt          DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items  WholesaleOrderItem[]
+  events WholesaleOrderEvent[]
+
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([createdAt])
+}
+
+model WholesaleOrderEvent {
+  id        String   @id @default(uuid())
+  orderId   String
+  type      String
+  message   String
+  createdAt DateTime @default(now())
+
+  order WholesaleOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+model WholesaleOrderItem {
+  id          String @id @default(uuid())
+  orderId     String
+  // Snapshot so historical orders survive catalog edits/deletions.
+  catNo       String @default("")
+  productName String
+  strength    String @default("")
+  vialSize    String @default("")
+  unitPriceCents Int
+  qty         Int
+
+  order WholesaleOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
 }
 
 /// Pre-account signup waiting on email OTP verification.

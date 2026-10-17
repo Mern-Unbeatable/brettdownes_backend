@@ -175,3 +175,71 @@ export async function applyCarrierScans(order, snapshot) {
     from: order.status,
   }
 }
+
+/**
+ * Same carrier scan timeline as main shop orders, stored on WholesaleOrderEvent.
+ */
+export async function applyWholesaleCarrierScans(order, snapshot) {
+  const existing = await prisma.wholesaleOrderEvent.findMany({
+    where: { orderId: order.id, type: 'TRACKING' },
+    select: { message: true, createdAt: true },
+  })
+  const seen = new Set(existing.map((event) => `${event.message}|${scanStamp(event.createdAt)}`))
+  const fresh = []
+
+  for (const scan of snapshot.events || []) {
+    const message = scanMessage(scan)
+    if (!message) continue
+    const createdAt = scan.datetime ? new Date(scan.datetime) : new Date()
+    const when = Number.isNaN(createdAt.getTime()) ? new Date() : createdAt
+    const key = `${message}|${scanStamp(when)}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    fresh.push({ message, createdAt: when })
+  }
+
+  const nextStatus = mapTrackerToOrderStatus(snapshot.status)
+  const rank = { PENDING: 0, PROCESSING: 1, SHIPPED: 2, DELIVERED: 3 }
+  const advance =
+    nextStatus &&
+    !CLOSED.has(order.status) &&
+    (rank[nextStatus] || 0) > (rank[order.status] || 0)
+
+  if (!fresh.length && !advance) {
+    return { added: 0, status: order.status }
+  }
+
+  const updated = await prisma.wholesaleOrder.update({
+    where: { id: order.id },
+    data: {
+      ...(advance ? { status: nextStatus } : {}),
+      ...(snapshot.carrier && !order.carrier ? { carrier: snapshot.carrier } : {}),
+      ...(fresh.length
+        ? {
+            events: {
+              create: fresh.map((event) => ({
+                type: 'TRACKING',
+                message: event.message,
+                createdAt: event.createdAt,
+              })),
+            },
+          }
+        : {}),
+    },
+    include: { items: true },
+  })
+
+  if (advance && nextStatus === 'DELIVERED') {
+    const { serializeWholesaleOrder } = await import('../wholesale/wholesale.service.js')
+    sendMail({
+      to: updated.contactEmail,
+      ...templates.storeOrderStatusChanged(serializeWholesaleOrder(updated)),
+    })
+  }
+
+  return {
+    added: fresh.length,
+    status: updated.status,
+    from: order.status,
+  }
+}

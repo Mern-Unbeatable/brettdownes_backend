@@ -8,7 +8,7 @@
 
 export const WHOLESALE_CATEGORIES = [
   {
-    name: 'Oil',
+    name: 'Oils',
     products: [
       { catNo: 'C250', name: 'TESTOSTERONE CYPIONATE', strength: '250mg', vialSize: '10ml', price: 181.44 },
       { catNo: 'E250', name: 'TE250', strength: '250mg', vialSize: '10ml', price: 181.44 },
@@ -83,7 +83,7 @@ export const WHOLESALE_CATEGORIES = [
     ],
   },
   {
-    name: 'Tablets',
+    name: 'Tabs',
     products: [
       { catNo: 'CB40', name: 'CLENBUTEROL', strength: '', vialSize: '100 tablets/bottle', price: 31.75 },
       { catNo: 'CD50', name: 'Clomiphene, or Clomid', strength: '50mg', vialSize: '50 mg x 100 tablets/box', price: 51.41 },

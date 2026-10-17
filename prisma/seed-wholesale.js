@@ -66,9 +66,25 @@ async function seedCatalog() {
   }
 }
 
+/** Ensures the three storefront tabs exist: Oils / Tabs / Other. */
+async function seedOtherCategory() {
+  const slug = 'other'
+  const existing = await prisma.wholesaleCategory.findUnique({ where: { slug } })
+  if (existing) {
+    console.log('[wholesale] "Other" category already exists')
+    return
+  }
+  const count = await prisma.wholesaleCategory.count()
+  await prisma.wholesaleCategory.create({
+    data: { name: 'Other', slug, sortOrder: count },
+  })
+  console.log('[wholesale] created empty "Other" category')
+}
+
 async function main() {
   await seedAccessPassword()
   await seedCatalog()
+  await seedOtherCategory()
 }
 
 main()

@@ -1,7 +1,7 @@
 import { prisma } from '../../lib/prisma.js'
 import { env } from '../../lib/env.js'
 import { fetchCarrierTracking } from '../../lib/easypost.js'
-import { applyCarrierScans } from './tracking.service.js'
+import { applyCarrierScans, applyWholesaleCarrierScans } from './tracking.service.js'
 
 const INTERVAL_MS = 60_000
 let running = false
@@ -42,6 +42,39 @@ async function checkOpenShipments() {
         }
       } catch (error) {
         console.error(`[tracking] ${order.orderNumber}: ${error.message}`)
+      }
+    }
+
+    const storeOrders = await prisma.wholesaleOrder.findMany({
+      where: {
+        trackingCode: { not: null },
+        status: { in: ['PROCESSING', 'SHIPPED'] },
+      },
+      select: {
+        id: true,
+        orderNumber: true,
+        trackingCode: true,
+        carrier: true,
+        shippingLabel: true,
+        status: true,
+        contactEmail: true,
+      },
+    })
+
+    for (const order of storeOrders) {
+      try {
+        const snapshot = await fetchCarrierTracking({
+          trackingCode: order.trackingCode,
+          carrier: `${order.carrier || ''} ${order.shippingLabel || ''}`,
+        })
+        const result = await applyWholesaleCarrierScans(order, snapshot)
+        if (result.added > 0 || result.status !== order.status) {
+          console.log(
+            `[tracking] ${order.orderNumber} (store) +${result.added} scans → ${result.status}`,
+          )
+        }
+      } catch (error) {
+        console.error(`[tracking] ${order.orderNumber} (store): ${error.message}`)
       }
     }
   } catch (error) {

@@ -90,7 +90,7 @@ function carrierLabel(carrier, trackingCode) {
   return 'Carrier'
 }
 
-function inferCarrier(trackingCode, carrier) {
+export function inferCarrier(trackingCode, carrier) {
   const given = String(carrier || '').trim()
   if (given) return given
   const raw = String(trackingCode || '').trim()

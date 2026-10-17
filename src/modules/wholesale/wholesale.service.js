@@ -2,8 +2,17 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '../../lib/prisma.js'
 import { badRequest, notFound, unauthorized } from '../../lib/http-error.js'
 import { toCents, toDollars } from '../../lib/money.js'
+import { buildParcel, createShipmentWithRates, refreshRates } from '../../lib/easypost.js'
+import { getSettings } from '../settings/settings.service.js'
+import { calculateCouponDiscount } from '../orders/discount.service.js'
+import { inferCarrier, trackingUrlFor } from '../orders/new-orders.js'
 
 const WHOLESALE_SETTINGS_KEY = 'wholesale'
+
+export const WHOLESALE_ORDER_INCLUDE = {
+  items: true,
+  events: { orderBy: { createdAt: 'desc' } },
+}
 /** Fallback access password used until an admin changes it. */
 export const DEFAULT_WHOLESALE_PASSWORD = 'wholesale2026'
 
@@ -42,6 +51,7 @@ export function serializeWholesaleProduct(product) {
     vialSize: product.vialSize,
     price: toDollars(product.priceCents),
     priceCents: product.priceCents,
+    inStock: product.inStock,
     sortOrder: product.sortOrder,
   }
 }
@@ -184,6 +194,7 @@ function productWriteData(input) {
   if (input.vialSize !== undefined) data.vialSize = String(input.vialSize).trim()
   if (input.price !== undefined) data.priceCents = toCents(input.price)
   if (input.priceCents !== undefined) data.priceCents = Math.round(Number(input.priceCents) || 0)
+  if (input.inStock !== undefined) data.inStock = Boolean(input.inStock)
   if (input.sortOrder !== undefined) data.sortOrder = input.sortOrder
   return data
 }
@@ -228,5 +239,431 @@ export async function deleteProduct(id) {
   const existing = await prisma.wholesaleProduct.findUnique({ where: { id } })
   if (!existing) throw notFound('Product not found.')
   await prisma.wholesaleProduct.delete({ where: { id } })
+  return { ok: true }
+}
+
+/* ------------------------------------------------------------------ */
+/* Storefront config (note banner, Telegram link)                       */
+/* ------------------------------------------------------------------ */
+
+const DEFAULT_NOTE =
+  "These are more specialized items, so they're not always in stock. If something you need is out of stock, contact us and we'll add it to our next order."
+
+/** Public config shown on the /other storefront. Shipping uses live carrier rates at checkout. */
+export async function getWholesaleConfig() {
+  const settings = await readWholesaleSettings()
+  return {
+    note: typeof settings.note === 'string' ? settings.note : DEFAULT_NOTE,
+    telegramUrl: typeof settings.telegramUrl === 'string' ? settings.telegramUrl : '',
+  }
+}
+
+/** Admin: update the storefront config. */
+export async function updateWholesaleConfig(patch) {
+  const settings = await readWholesaleSettings()
+  const next = { ...settings }
+  if (patch.note !== undefined) next.note = String(patch.note || '').slice(0, 2000)
+  if (patch.telegramUrl !== undefined) next.telegramUrl = String(patch.telegramUrl || '').trim().slice(0, 400)
+  await writeWholesaleSettings(next)
+  return getWholesaleConfig()
+}
+
+/* ------------------------------------------------------------------ */
+/* Guest orders + checkout                                             */
+/* ------------------------------------------------------------------ */
+
+export function serializeWholesaleOrder(order) {
+  return {
+    id: order.id,
+    orderNumber: order.orderNumber,
+    status: order.status,
+    paymentStatus: order.paymentStatus,
+    subtotalCents: order.subtotalCents,
+    discountCents: order.discountCents,
+    couponCode: order.couponCode,
+    shippingCents: order.shippingCents,
+    totalCents: order.totalCents,
+    currency: order.currency,
+    shippingLabel: order.shippingLabel,
+    contactName: order.contactName,
+    contactEmail: order.contactEmail,
+    contactPhone: order.contactPhone,
+    addressLine1: order.addressLine1,
+    addressLine2: order.addressLine2,
+    city: order.city,
+    state: order.state,
+    zip: order.zip,
+    country: order.country,
+    notes: order.notes,
+    trackingCode: order.trackingCode,
+    trackingUrl: order.trackingUrl,
+    carrier: order.carrier,
+    shippedAt: order.shippedAt,
+    paidAt: order.paidAt,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    items: (order.items || []).map((item) => ({
+      id: item.id,
+      catNo: item.catNo,
+      productName: item.productName,
+      strength: item.strength,
+      vialSize: item.vialSize,
+      unitPriceCents: item.unitPriceCents,
+      price: toDollars(item.unitPriceCents),
+      qty: item.qty,
+    })),
+    events: (order.events || []).map((event) => ({
+      id: event.id,
+      type: event.type,
+      message: event.message,
+      createdAt: event.createdAt,
+    })),
+  }
+}
+
+/** ORD-YYMMDD-XXXX — same format as the main shop (separate table, so numbers never clash). */
+async function nextWholesaleOrderNumber() {
+  const stamp = new Date().toISOString().slice(2, 10).replace(/-/g, '')
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const suffix = Math.floor(1000 + Math.random() * 9000)
+    const candidate = `ORD-${stamp}-${suffix}`
+    const clash = await prisma.wholesaleOrder.findUnique({
+      where: { orderNumber: candidate },
+      select: { id: true },
+    })
+    if (!clash) return candidate
+  }
+  return `ORD-${stamp}-${Date.now().toString().slice(-6)}`
+}
+
+/**
+ * Resolves client-supplied order lines against the catalogue. Prices and the
+ * item snapshot always come from the DB so the client cannot influence what is
+ * charged or shipped.
+ */
+async function resolveWholesaleItems(lines) {
+  if (!Array.isArray(lines) || !lines.length) throw badRequest('Your order is empty.')
+
+  const ids = [...new Set(lines.map((line) => String(line.id)))]
+  const products = await prisma.wholesaleProduct.findMany({ where: { id: { in: ids } } })
+  const byId = new Map(products.map((product) => [product.id, product]))
+
+  const items = []
+  for (const line of lines) {
+    const product = byId.get(String(line.id))
+    if (!product) throw badRequest('One of the items is no longer available.')
+    if (!product.inStock) {
+      throw badRequest(`${product.name || product.catNo} is out of stock.`)
+    }
+    const qty = Math.max(1, Math.trunc(Number(line.qty) || 1))
+    items.push({
+      // productId/category let the shared coupon calculator run; private-store
+      // ids never match main-shop product coupons, so only "all products"
+      // coupons apply here.
+      productId: product.id,
+      category: 'Other',
+      catNo: product.catNo,
+      productName: product.name || product.catNo || 'Item',
+      strength: product.strength,
+      vialSize: product.vialSize,
+      unitPriceCents: product.priceCents,
+      qty,
+    })
+  }
+
+  const subtotalCents = items.reduce((sum, item) => sum + item.unitPriceCents * item.qty, 0)
+  return { items, subtotalCents }
+}
+
+/** Validates a coupon against a private-store cart (guest, no account). */
+export async function validateWholesaleCoupon({ items: lines, code }) {
+  const { items } = await resolveWholesaleItems(lines)
+  return calculateCouponDiscount(items, code)
+}
+
+/**
+ * Live carrier quotes for the private store — the exact same EasyPost flow as
+ * the main shop, so the customer picks a real USPS/FedEx/UPS rate. Guest access
+ * (no account needed).
+ */
+export async function quoteWholesaleRates({ items: lines, address }) {
+  const { items, subtotalCents } = await resolveWholesaleItems(lines)
+  const settings = await getSettings()
+  const parcel = buildParcel(items)
+
+  const { shipmentId, rates } = await createShipmentWithRates({
+    toAddress: {
+      name: address.name || address.email || 'Customer',
+      street1: address.line1,
+      street2: address.line2 || undefined,
+      city: address.city,
+      state: address.state,
+      zip: address.zip,
+      country: address.country,
+      phone: address.phone || undefined,
+      email: address.email || undefined,
+    },
+    fromAddress: settings.shipFrom,
+    parcel,
+  })
+
+  const threshold = settings.freeShippingThresholdCents
+  const qualifiesFree = threshold > 0 && subtotalCents >= threshold
+
+  return {
+    shipmentId,
+    parcel,
+    freeShipping: qualifiesFree,
+    rates: rates.map((rate) => ({
+      ...rate,
+      // Fold handling into the shown price so the charged total always matches.
+      amountCents: qualifiesFree ? 0 : rate.amountCents + settings.handlingFeeCents,
+    })),
+  }
+}
+
+/**
+ * Builds a pending order from client input. Prices come from the DB and the
+ * shipping cost is re-read from EasyPost (never trusted from the client) so the
+ * charged total is authoritative.
+ */
+export async function createPendingWholesaleOrder(input) {
+  const { items, subtotalCents } = await resolveWholesaleItems(input.items)
+  const settings = await getSettings()
+
+  // Re-validate the coupon server-side so the client can't dictate the discount.
+  const coupon = input.couponCode
+    ? await calculateCouponDiscount(items, input.couponCode)
+    : null
+  const discountCents = Math.min(subtotalCents, coupon?.discountCents || 0)
+  const merchandiseCents = Math.max(0, subtotalCents - discountCents)
+
+  const shipCountry = String(input.address?.country || 'US').trim().toUpperCase()
+  const { rates } = await refreshRates(input.shipmentId, {
+    international: shipCountry !== 'US',
+  })
+  const rate = rates.find((entry) => entry.id === input.rateId)
+  if (!rate) {
+    throw badRequest('That shipping rate has expired. Please recalculate shipping and try again.')
+  }
+
+  const threshold = settings.freeShippingThresholdCents
+  const qualifiesFree = threshold > 0 && merchandiseCents >= threshold
+  const shippingCents = qualifiesFree ? 0 : rate.amountCents + settings.handlingFeeCents
+  const shippingLabel = [rate.carrier, rate.service].filter(Boolean).join(' ') || 'Shipping'
+  const totalCents = merchandiseCents + shippingCents
+
+  const orderNumber = await nextWholesaleOrderNumber()
+  const order = await prisma.wholesaleOrder.create({
+    data: {
+      orderNumber,
+      status: 'PENDING',
+      paymentStatus: 'UNPAID',
+      subtotalCents,
+      discountCents,
+      couponCode: coupon?.code || null,
+      shippingCents,
+      totalCents,
+      shippingLabel,
+      carrier: rate.carrier || null,
+      contactName: input.contact.name,
+      contactEmail: input.contact.email,
+      contactPhone: input.contact.phone,
+      addressLine1: input.address.line1,
+      addressLine2: input.address.line2 || null,
+      city: input.address.city,
+      state: input.address.state,
+      zip: input.address.zip,
+      country: input.address.country || 'US',
+      notes: input.notes || null,
+      items: {
+        create: items.map((item) => ({
+          catNo: item.catNo,
+          productName: item.productName,
+          strength: item.strength,
+          vialSize: item.vialSize,
+          unitPriceCents: item.unitPriceCents,
+          qty: item.qty,
+        })),
+      },
+    },
+    include: { items: true },
+  })
+
+  if (coupon?.couponId) {
+    await prisma.coupon.update({
+      where: { id: coupon.couponId },
+      data: { usageCount: { increment: 1 } },
+    }).catch(() => {})
+  }
+
+  return order
+}
+
+export async function attachWholesaleSession(orderId, sessionId) {
+  await prisma.wholesaleOrder.update({
+    where: { id: orderId },
+    data: { stripeSessionId: sessionId },
+  })
+}
+
+/** Marks a wholesale order paid exactly once. Returns the order or null if already paid. */
+export async function markWholesaleOrderPaid(orderId) {
+  const result = await prisma.wholesaleOrder.updateMany({
+    where: { id: orderId, paymentStatus: { not: 'PAID' } },
+    data: { paymentStatus: 'PAID', status: 'PROCESSING', paidAt: new Date() },
+  })
+  if (result.count === 0) return null
+  const paid = await prisma.wholesaleOrder.findUnique({
+    where: { id: orderId },
+    include: WHOLESALE_ORDER_INCLUDE,
+  })
+  if (paid) {
+    await prisma.wholesaleOrderEvent.create({
+      data: {
+        orderId: paid.id,
+        type: 'PAYMENT',
+        message: 'Stripe payment received. Order marked processing.',
+      },
+    })
+  }
+  return prisma.wholesaleOrder.findUnique({
+    where: { id: orderId },
+    include: WHOLESALE_ORDER_INCLUDE,
+  })
+}
+
+export async function getWholesaleOrder(id) {
+  const order = await prisma.wholesaleOrder.findUnique({
+    where: { id },
+    include: WHOLESALE_ORDER_INCLUDE,
+  })
+  if (!order) throw notFound('Order not found.')
+  return order
+}
+
+/** Backfill a timeline row when tracking was saved before events existed. */
+export async function ensureWholesaleTrackingTimelineSeed(order) {
+  if (!order?.trackingCode) return
+  const count = await prisma.wholesaleOrderEvent.count({ where: { orderId: order.id } })
+  if (count > 0) return
+  const carrier = inferCarrier(order.trackingCode, order.carrier || order.shippingLabel) || 'USPS'
+  await prisma.wholesaleOrderEvent.create({
+    data: {
+      orderId: order.id,
+      type: 'TRACKING',
+      message: `${carrier} tracking ${order.trackingCode} added. Order marked shipped.`,
+      ...(order.shippedAt ? { createdAt: order.shippedAt } : {}),
+    },
+  })
+}
+
+/** Pulls USPS/UPS scans onto the other-store order timeline (same as main shop poller). */
+export async function refreshWholesaleOrderTracking(order) {
+  if (!order?.trackingCode) return order
+  if (['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(order.status)) return order
+  await ensureWholesaleTrackingTimelineSeed(order)
+  const { fetchCarrierTracking } = await import('../../lib/easypost.js')
+  const { applyWholesaleCarrierScans } = await import('../orders/tracking.service.js')
+  try {
+    const snapshot = await fetchCarrierTracking({
+      trackingCode: order.trackingCode,
+      carrier: `${order.carrier || ''} ${order.shippingLabel || ''}`,
+    })
+    await applyWholesaleCarrierScans(order, snapshot)
+  } catch {
+    // Missing tracking API key or carrier hiccup — still return order with seed event.
+  }
+  return getWholesaleOrder(order.id)
+}
+
+export async function listWholesaleOrders({ status, search } = {}) {
+  const where = {
+    ...(status ? { status } : {}),
+    ...(search
+      ? {
+          OR: [
+            { orderNumber: { contains: search, mode: 'insensitive' } },
+            { contactName: { contains: search, mode: 'insensitive' } },
+            { contactEmail: { contains: search, mode: 'insensitive' } },
+            { trackingCode: { contains: search, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
+  }
+  const orders = await prisma.wholesaleOrder.findMany({
+    where,
+    include: { items: true },
+    orderBy: { createdAt: 'desc' },
+  })
+  return orders.map(serializeWholesaleOrder)
+}
+
+export async function updateWholesaleOrderStatus(id, status) {
+  const existing = await prisma.wholesaleOrder.findUnique({ where: { id } })
+  if (!existing) throw notFound('Order not found.')
+  const order = await prisma.wholesaleOrder.update({
+    where: { id },
+    data: {
+      status,
+      ...(status === 'SHIPPED' && !existing.shippedAt ? { shippedAt: new Date() } : {}),
+      ...(status === 'PAID' ? {} : {}),
+    },
+    include: WHOLESALE_ORDER_INCLUDE,
+  })
+  return order
+}
+
+export async function updateWholesaleOrderPayment(id, paymentStatus) {
+  const existing = await prisma.wholesaleOrder.findUnique({ where: { id } })
+  if (!existing) throw notFound('Order not found.')
+  const order = await prisma.wholesaleOrder.update({
+    where: { id },
+    data: {
+      paymentStatus,
+      ...(paymentStatus === 'PAID' && !existing.paidAt ? { paidAt: new Date() } : {}),
+      ...(paymentStatus === 'PAID' && existing.status === 'PENDING' ? { status: 'PROCESSING' } : {}),
+    },
+    include: WHOLESALE_ORDER_INCLUDE,
+  })
+  return order
+}
+
+/** Saves a tracking number and returns the order so the caller can email the customer. */
+export async function setWholesaleOrderTracking(id, { trackingCode, carrier, trackingUrl }) {
+  const existing = await prisma.wholesaleOrder.findUnique({ where: { id } })
+  if (!existing) throw notFound('Order not found.')
+  const code = String(trackingCode || '').trim()
+  if (!code) throw badRequest('Paste a tracking number.')
+  const resolvedCarrier = inferCarrier(code, carrier || existing.carrier || existing.shippingLabel)
+  const resolvedUrl =
+    (trackingUrl && String(trackingUrl).trim()) ||
+    trackingUrlFor(resolvedCarrier, code) ||
+    existing.trackingUrl
+  const label = resolvedCarrier || 'Carrier'
+  const order = await prisma.wholesaleOrder.update({
+    where: { id },
+    data: {
+      trackingCode: code,
+      carrier: resolvedCarrier || existing.carrier,
+      trackingUrl: resolvedUrl,
+      status: 'SHIPPED',
+      shippedAt: existing.shippedAt || new Date(),
+      events: {
+        create: {
+          type: 'TRACKING',
+          message: `${label} tracking ${code} added. Order marked shipped.`,
+        },
+      },
+    },
+    include: WHOLESALE_ORDER_INCLUDE,
+  })
+  return order
+}
+
+export async function deleteWholesaleOrder(id) {
+  const existing = await prisma.wholesaleOrder.findUnique({ where: { id } })
+  if (!existing) throw notFound('Order not found.')
+  await prisma.wholesaleOrder.delete({ where: { id } })
   return { ok: true }
 }

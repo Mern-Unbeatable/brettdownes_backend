@@ -61,6 +61,44 @@ function totals(order) {
   </table>`
 }
 
+function storeItemsTable(items) {
+  const rows = (items || [])
+    .map((item) => {
+      const specs = [item.strength, item.vialSize].filter(Boolean).join(', ')
+      const label = `${item.productName}${specs ? ` <span style="color:${BRAND.muted};">(${specs})</span>` : ''} <span style="color:${BRAND.muted};">x ${item.qty}</span>`
+      return `<tr>
+        <td style="padding:8px 0;font-size:13px;color:${BRAND.ink};">${label}</td>
+        <td style="padding:8px 0;font-size:13px;text-align:right;color:${BRAND.ink};">${formatMoney(item.unitPriceCents * item.qty)}</td>
+      </tr>`
+    })
+    .join('')
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0;border-top:1px solid #e5e7eb;">${rows}</table>`
+}
+
+function storeTotals(order) {
+  const discountRow =
+    order.discountCents > 0
+      ? `<tr><td style="padding:6px 0;font-size:13px;color:${BRAND.muted};">Discount${order.couponCode ? ` (${order.couponCode})` : ''}</td><td style="padding:6px 0;font-size:13px;text-align:right;">-${formatMoney(order.discountCents)}</td></tr>`
+      : ''
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e5e7eb;padding-top:8px;">
+    <tr><td style="padding:6px 0;font-size:13px;color:${BRAND.muted};">Subtotal</td><td style="padding:6px 0;font-size:13px;text-align:right;">${formatMoney(order.subtotalCents)}</td></tr>
+    ${discountRow}
+    <tr><td style="padding:6px 0;font-size:13px;color:${BRAND.muted};">${order.shippingLabel || 'Shipping'}</td><td style="padding:6px 0;font-size:13px;text-align:right;">${formatMoney(order.shippingCents)}</td></tr>
+    <tr><td style="padding:6px 0;font-size:15px;font-weight:700;">Total</td><td style="padding:6px 0;font-size:15px;font-weight:700;text-align:right;">${formatMoney(order.totalCents)}</td></tr>
+  </table>`
+}
+
+function storeAddress(order) {
+  return [
+    order.addressLine1,
+    order.addressLine2,
+    [order.city, order.state, order.zip].filter(Boolean).join(', '),
+    order.country,
+  ]
+    .filter(Boolean)
+    .join('<br />')
+}
+
 export const templates = {
   registrationOtp: (name, otp) => ({
     subject: 'Your Peptide Ops verification code',
@@ -195,6 +233,64 @@ export const templates = {
       paragraph(`Hi ${order.contactName},`) +
         paragraph(`Your order <strong>${order.orderNumber}</strong> is now marked as <strong>${order.status.toLowerCase()}</strong>.`) +
         button(`${env.clientUrl}/dashboard/orders`, 'View your orders'),
+    ),
+  }),
+
+  storeOrderConfirmation: (order) => ({
+    subject: `Order ${order.orderNumber} confirmed`,
+    html: layout(
+      `Order ${order.orderNumber}`,
+      paragraph(`Hi ${order.contactName},`) +
+        paragraph(
+          'Thanks for your order — we received your payment. You will get an email with a tracking link as soon as it ships.',
+        ) +
+        storeItemsTable(order.items) +
+        storeTotals(order) +
+        paragraph(
+          `<span style="color:${BRAND.muted};font-size:12px;">Shipping to:<br />${storeAddress(order)}</span>`,
+        ),
+    ),
+  }),
+
+  storeAdminNewOrder: (order) => ({
+    subject: `New store order ${order.orderNumber} - ${formatMoney(order.totalCents)}`,
+    html: layout(
+      'New store order',
+      paragraph(
+        `<strong>${order.contactName}</strong> (${order.contactEmail}, ${order.contactPhone}) placed order ${order.orderNumber}.`,
+      ) +
+        storeItemsTable(order.items) +
+        storeTotals(order) +
+        paragraph(
+          `<span style="color:${BRAND.muted};font-size:12px;">Ship to:<br />${storeAddress(order)}</span>`,
+        ) +
+        button(`${env.clientUrl}/admin/store-orders`, 'Open in admin'),
+    ),
+  }),
+
+  storeOrderShipped: (order) => ({
+    subject: `Order ${order.orderNumber} has shipped`,
+    html: layout(
+      'On its way',
+      paragraph(`Hi ${order.contactName},`) +
+        paragraph(
+          `Your order is on its way${order.carrier ? ` via <strong>${order.carrier}</strong>` : ''}.`,
+        ) +
+        (order.trackingCode
+          ? paragraph(`Tracking number: <strong>${order.trackingCode}</strong>`)
+          : '') +
+        (order.trackingUrl ? button(order.trackingUrl, 'Track your shipment') : ''),
+    ),
+  }),
+
+  storeOrderStatusChanged: (order) => ({
+    subject: `Order ${order.orderNumber} is now ${order.status.toLowerCase()}`,
+    html: layout(
+      'Order update',
+      paragraph(`Hi ${order.contactName},`) +
+        paragraph(
+          `Your order <strong>${order.orderNumber}</strong> is now marked as <strong>${order.status.toLowerCase()}</strong>.`,
+        ),
     ),
   }),
 
