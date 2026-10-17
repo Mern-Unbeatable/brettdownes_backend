@@ -10,8 +10,8 @@
     "seed": "node prisma/seed.js"
   },
   "scripts": {
-    "dev": "node api.js && node --watch src/server.js",
-    "start": "node api.js && node src/server.js",
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",

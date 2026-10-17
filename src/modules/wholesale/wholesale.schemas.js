@@ -109,6 +109,14 @@ export const confirmSchema = z.object({
   sessionId: z.string().min(1),
 })
 
+export const adminOrderListQuerySchema = z.object({
+  search: z.string().trim().max(120).optional(),
+  status: z.enum(['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED']).optional(),
+  paymentStatus: z.enum(['UNPAID', 'PAID', 'REFUNDED']).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  perPage: z.coerce.number().int().min(1).max(100).default(20),
+})
+
 export const orderStatusSchema = z.object({
   status: z.enum(['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED']),
 })

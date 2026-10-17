@@ -577,9 +577,16 @@ export async function refreshWholesaleOrderTracking(order) {
   return getWholesaleOrder(order.id)
 }
 
-export async function listWholesaleOrders({ status, search } = {}) {
+export async function listWholesaleOrders({
+  status,
+  paymentStatus,
+  search,
+  page = 1,
+  perPage = 20,
+} = {}) {
   const where = {
     ...(status ? { status } : {}),
+    ...(paymentStatus ? { paymentStatus } : {}),
     ...(search
       ? {
           OR: [
@@ -591,12 +598,35 @@ export async function listWholesaleOrders({ status, search } = {}) {
         }
       : {}),
   }
-  const orders = await prisma.wholesaleOrder.findMany({
-    where,
-    include: { items: true },
-    orderBy: { createdAt: 'desc' },
-  })
-  return orders.map(serializeWholesaleOrder)
+
+  const [total, orders, allCount, awaiting, paidAgg] = await Promise.all([
+    prisma.wholesaleOrder.count({ where }),
+    prisma.wholesaleOrder.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * perPage,
+      take: perPage,
+    }),
+    prisma.wholesaleOrder.count(),
+    prisma.wholesaleOrder.count({ where: { status: { in: ['PENDING', 'PROCESSING'] } } }),
+    prisma.wholesaleOrder.aggregate({
+      where: { paymentStatus: 'PAID' },
+      _sum: { totalCents: true },
+    }),
+  ])
+
+  return {
+    orders: orders.map(serializeWholesaleOrder),
+    total,
+    page,
+    perPage,
+    pages: Math.max(1, Math.ceil(total / perPage)),
+    stats: {
+      total: allCount,
+      awaiting,
+      revenueCents: paidAgg._sum.totalCents || 0,
+    },
+  }
 }
 
 export async function updateWholesaleOrderStatus(id, status) {

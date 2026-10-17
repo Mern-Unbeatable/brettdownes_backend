@@ -9,6 +9,7 @@ import { sendMail } from '../../lib/mailer.js'
 import { templates } from '../../lib/email-templates.js'
 import { getAdminRecipients, getSettings } from '../settings/settings.service.js'
 import {
+  adminOrderListQuerySchema,
   categoryCreateSchema,
   categoryUpdateSchema,
   changePasswordSchema,
@@ -228,13 +229,15 @@ router.delete('/admin/products/:id', requireAdmin, async (req, res) => {
 })
 
 /* ---- Admin: "Other" store orders ---------------------------------- */
-router.get('/admin/orders', requireAdmin, async (req, res) => {
-  const orders = await listWholesaleOrders({
-    status: req.query.status || undefined,
-    search: req.query.search || undefined,
-  })
-  res.json({ orders, total: orders.length })
-})
+router.get(
+  '/admin/orders',
+  requireAdmin,
+  validate(adminOrderListQuerySchema, 'query'),
+  async (req, res) => {
+    const result = await listWholesaleOrders(req.validatedQuery)
+    res.json(result)
+  },
+)
 
 router.get('/admin/orders/:id', requireAdmin, async (req, res) => {
   let order = await getWholesaleOrder(req.params.id)
