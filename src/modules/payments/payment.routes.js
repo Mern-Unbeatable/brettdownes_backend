@@ -4,15 +4,16 @@ import { prisma } from '../../lib/prisma.js'
 import { badRequest, notFound } from '../../lib/http-error.js'
 import { requireAuth } from '../../middleware/auth.js'
 import { validate } from '../../middleware/validate.js'
+import { rateLimit } from '../../middleware/rate-limit.js'
 import { env } from '../../lib/env.js'
 import { getStripe, sanitizeDescriptor } from '../../lib/stripe.js'
-import { sendMail } from '../../lib/mailer.js'
-import { templates } from '../../lib/email-templates.js'
-import { getAdminRecipients, getSettings } from '../settings/settings.service.js'
 import { removePurchasedCartItems } from '../cart/cart.service.js'
-import { purchaseOrderLabel } from '../orders/label.service.js'
-import { deductOrderStock } from '../orders/inventory.service.js'
 import { ORDER_INCLUDE, serializeOrder } from '../orders/order.serializer.js'
+import {
+  applyPaidCheckoutSession,
+  checkoutSessionIsPaid,
+  markOrderPaid,
+} from './payment.service.js'
 
 const orderIdSchema = z.object({ orderId: z.string().min(1) })
 const sessionSchema = z.object({
@@ -20,76 +21,11 @@ const sessionSchema = z.object({
   sessionId: z.string().min(1),
 })
 
-/**
- * Buys the exact rate selected at checkout after payment succeeds. A carrier
- * failure must never undo a successful payment; admins can retry from the order.
- */
-async function buyPaidOrderLabel(order) {
-  if (order.fulfillment !== 'DELIVERY' || order.labelUrl) {
-    return order
-  }
-
-  try {
-    return await purchaseOrderLabel(order)
-  } catch (error) {
-    console.error(`[shipping] Automatic label purchase failed for order ${order.orderNumber}:`, error)
-    await prisma.orderEvent.create({
-      data: {
-        orderId: order.id,
-        type: 'LABEL_FAILED',
-        message: `Automatic label purchase failed: ${error.message || 'Unknown carrier error'}`,
-      },
-    })
-    return order
-  }
-}
-
-void buyPaidOrderLabel
-
-/** Marks an order paid exactly once and fires the confirmation emails. */
-async function markOrderPaid(orderId, { paymentIntentId } = {}) {
-  const existing = await prisma.order.findUnique({ where: { id: orderId } })
-  if (!existing || existing.paymentStatus === 'PAID') return null
-
-  let order = await prisma.order.update({
-    where: { id: orderId },
-    data: {
-      paymentStatus: 'PAID',
-      status: existing.status === 'PENDING' ? 'PROCESSING' : existing.status,
-      paidAt: new Date(),
-      ...(paymentIntentId ? { stripePaymentIntentId: paymentIntentId } : {}),
-      events: {
-        create: { type: 'PAYMENT', message: 'Card payment confirmed by Stripe.' },
-      },
-    },
-    include: ORDER_INCLUDE,
-  })
-
-  // Pirate Ship fulfillment: EasyPost quotes stay at checkout, but labels are not bought here.
-  // Restore automatic labels by uncommenting the next line.
-  // order = await buyPaidOrderLabel(order)
-  await deductOrderStock(order)
-
-  if (order.couponCode) {
-    await prisma.coupon.updateMany({
-      where: { code: order.couponCode },
-      data: { usageCount: { increment: 1 } },
-    })
-  }
-
-  await removePurchasedCartItems(
-    order.userId,
-    order.items.map((item) => item.variantId),
-  )
-
-  const settings = await getSettings()
-  sendMail({ to: order.contactEmail, ...templates.orderConfirmation(order) })
-  if (settings.notifyNewOrder) {
-    sendMail({ to: await getAdminRecipients(settings), ...templates.adminNewOrder(order) })
-  }
-
-  return order
-}
+const confirmThrottle = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  message: 'Too many payment checks. Please wait a moment.',
+})
 
 const router = Router()
 
@@ -108,6 +44,7 @@ router.post('/checkout-session', requireAuth, validate(orderIdSchema), async (re
   }
   if (order.status === 'CANCELLED') throw badRequest('This order was cancelled.')
 
+  const { getSettings } = await import('../settings/settings.service.js')
   const settings = await getSettings()
   const stripe = getStripe()
   const descriptor = sanitizeDescriptor(settings.statementDescriptor)
@@ -116,7 +53,6 @@ router.post('/checkout-session', requireAuth, validate(orderIdSchema), async (re
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
     customer_email: order.contactEmail,
-    // Amount only — Stripe Checkout still needs a generic product label.
     line_items: [
       {
         quantity: 1,
@@ -144,7 +80,6 @@ router.post('/checkout-session', requireAuth, validate(orderIdSchema), async (re
     cancel_url: `${clientUrl}/checkout/cancel?orderId=${encodeURIComponent(order.id)}`,
   })
 
-  // Reuse the Stripe id column to remember the Checkout Session until paid.
   await prisma.order.update({
     where: { id: order.id },
     data: { stripePaymentIntentId: session.id },
@@ -159,19 +94,22 @@ router.post('/checkout-session', requireAuth, validate(orderIdSchema), async (re
 
 /**
  * Verifies a completed Checkout Session and marks the order paid.
- * Called from the success page — we only trust Stripe's session status.
+ * Auth is optional so Amazon Pay / wallet redirects still confirm if the
+ * session cookie was dropped.
  */
-router.post('/confirm-session', requireAuth, validate(sessionSchema), async (req, res) => {
-  const order = await prisma.order.findFirst({
-    where: { id: req.body.orderId, userId: req.user.id },
+router.post('/confirm-session', confirmThrottle, validate(sessionSchema), async (req, res) => {
+  const order = await prisma.order.findUnique({
+    where: { id: req.body.orderId },
     include: ORDER_INCLUDE,
   })
   if (!order) throw notFound('Order not found.')
   if (order.paymentStatus === 'PAID') {
-    await removePurchasedCartItems(
-      order.userId,
-      order.items.map((item) => item.variantId),
-    )
+    if (order.userId) {
+      await removePurchasedCartItems(
+        order.userId,
+        order.items.map((item) => item.variantId),
+      )
+    }
     return res.json({ paid: true, order: serializeOrder(order) })
   }
 
@@ -195,14 +133,12 @@ router.post('/confirm-session', requireAuth, validate(sessionSchema), async (req
         ? session.payment_intent
         : session.payment_intent?.id)
   ) {
-    // Allow confirm when the stored id is an older session for the same order,
-    // as long as Stripe metadata ties this session to the order.
     if (!sessionOrderId) {
       throw badRequest('This payment session does not match the order.')
     }
   }
 
-  if (session.payment_status !== 'paid' && session.status !== 'complete') {
+  if (!checkoutSessionIsPaid(session)) {
     return res.json({ paid: false, status: session.status, paymentStatus: session.payment_status })
   }
 
@@ -228,10 +164,9 @@ router.post('/confirm', requireAuth, validate(orderIdSchema), async (req, res) =
   if (order.paymentStatus === 'PAID') return res.json({ paid: true })
   if (!order.stripePaymentIntentId) throw badRequest('No payment has been started for this order.')
 
-  // Checkout Session ids start with cs_ — confirm via session retrieve.
   if (order.stripePaymentIntentId.startsWith('cs_')) {
     const session = await getStripe().checkout.sessions.retrieve(order.stripePaymentIntentId)
-    if (session.payment_status === 'paid' || session.status === 'complete') {
+    if (checkoutSessionIsPaid(session)) {
       const paymentIntentId =
         typeof session.payment_intent === 'string'
           ? session.payment_intent
@@ -239,7 +174,7 @@ router.post('/confirm', requireAuth, validate(orderIdSchema), async (req, res) =
       await markOrderPaid(order.id, { paymentIntentId })
       return res.json({ paid: true })
     }
-    return res.json({ paid: false, status: session.status })
+    return res.json({ paid: false, status: session.status, paymentStatus: session.payment_status })
   }
 
   const intent = await getStripe().paymentIntents.retrieve(order.stripePaymentIntentId)
@@ -250,5 +185,56 @@ router.post('/confirm', requireAuth, validate(orderIdSchema), async (req, res) =
   await markOrderPaid(order.id, { paymentIntentId: intent.id })
   res.json({ paid: true })
 })
+
+export async function handleStripeWebhook(req, res) {
+  const stripe = getStripe()
+  const signature = req.get('stripe-signature')
+  const secret = env.stripe.webhookSecret
+  if (!secret) {
+    console.error('[stripe] STRIPE_WEBHOOK_SECRET is not set; ignoring webhook.')
+    return res.status(503).json({ error: 'Webhook secret is not configured.' })
+  }
+
+  let event
+  try {
+    event = stripe.webhooks.constructEvent(req.body, signature, secret)
+  } catch (error) {
+    console.error('[stripe] Webhook signature failed:', error.message)
+    return res.status(400).json({ error: 'Invalid webhook signature.' })
+  }
+
+  try {
+    if (
+      event.type === 'checkout.session.completed' ||
+      event.type === 'checkout.session.async_payment_succeeded'
+    ) {
+      const session = event.data.object
+      if (checkoutSessionIsPaid(session) || event.type === 'checkout.session.async_payment_succeeded') {
+        const full = await stripe.checkout.sessions.retrieve(session.id, {
+          expand: ['payment_intent'],
+        })
+        await applyPaidCheckoutSession(full, {
+          message: 'Payment confirmed by Stripe webhook.',
+        })
+      }
+    }
+
+    if (event.type === 'payment_intent.succeeded') {
+      const intent = event.data.object
+      const orderId = intent.metadata?.orderId
+      if (orderId) {
+        await markOrderPaid(orderId, {
+          paymentIntentId: intent.id,
+          message: 'Payment confirmed by Stripe webhook.',
+        })
+      }
+    }
+  } catch (error) {
+    console.error('[stripe] Webhook handler failed:', error)
+    return res.status(500).json({ error: 'Webhook processing failed.' })
+  }
+
+  res.json({ received: true })
+}
 
 export default router

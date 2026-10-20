@@ -17,7 +17,7 @@ import adminOrderRoutes from './modules/orders/admin-order.routes.js'
 import adminUserRoutes from './modules/users/user.routes.js'
 import settingsRoutes from './modules/settings/settings.routes.js'
 import shippingRoutes from './modules/shipping/shipping.routes.js'
-import paymentRoutes from './modules/payments/payment.routes.js'
+import paymentRoutes, { handleStripeWebhook } from './modules/payments/payment.routes.js'
 import uploadRoutes from './modules/uploads/upload.routes.js'
 import discountRoutes from './modules/discounts/discount.routes.js'
 import coaRoutes from './modules/coa/coa.routes.js'
@@ -41,6 +41,11 @@ export function createApp() {
   )
 
   if (!env.isProd) app.use(morgan('dev'))
+
+  // Stripe needs the raw body to verify webhook signatures.
+  app.post('/api/payments/stripe/webhook', express.raw({ type: 'application/json' }), (req, res, next) => {
+    Promise.resolve(handleStripeWebhook(req, res)).catch(next)
+  })
 
   app.use(express.json({ limit: '1mb' }))
   app.use(express.urlencoded({ extended: true }))

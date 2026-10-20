@@ -21,6 +21,7 @@ import {
   serializeNewOrder,
   withParcel,
 } from './new-orders.js'
+import { syncOrderPaymentFromStripe, markOrderPaid } from '../payments/payment.service.js'
 
 const listQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),
@@ -371,13 +372,48 @@ router.get('/:id/label/download', async (req, res) => {
   res.send(buffer)
 })
 
+/** Pulls the Checkout Session / PaymentIntent from Stripe and marks paid if charged. */
+router.post('/:id/payment/sync', async (req, res) => {
+  const existing = await prisma.order.findUnique({
+    where: { id: req.params.id },
+    include: ORDER_INCLUDE,
+  })
+  if (!existing) throw notFound('Order not found.')
+
+  const result = await syncOrderPaymentFromStripe(existing)
+  if (!result.paid) {
+    throw badRequest(
+      result.paymentStatus
+        ? `Stripe still shows ${result.paymentStatus}. Refresh Stripe, then try again.`
+        : 'Could not confirm this payment in Stripe yet.',
+    )
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id: existing.id },
+    include: ORDER_INCLUDE,
+  })
+  res.json({ order: serializeOrder(order) })
+})
+
 router.patch('/:id/payment', validate(paymentSchema), async (req, res) => {
   const { paymentStatus } = req.body
 
   const existing = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!existing) throw notFound('Order not found.')
   if (existing.paymentMethod === 'STRIPE') {
-    throw badRequest('Stripe payments are managed automatically and cannot be changed manually.')
+    if (!(existing.paymentStatus === 'UNPAID' && paymentStatus === 'PAID')) {
+      throw badRequest(
+        'Stripe payments update automatically. If Stripe already charged the customer, use “Sync from Stripe”. You can only mark unpaid Stripe orders as paid here.',
+      )
+    }
+    const paid = await markOrderPaid(existing.id, {
+      message: 'Payment marked paid by an administrator after Stripe showed a successful charge.',
+    })
+    const order = paid
+      ? paid
+      : await prisma.order.findUnique({ where: { id: existing.id }, include: ORDER_INCLUDE })
+    return res.json({ order: serializeOrder(order) })
   }
 
   const order = await prisma.order.update({

@@ -46,6 +46,7 @@ export const env = {
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY || '',
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
     // Point at stripe-mock instead of the live API. Never set in production.
     apiHost: process.env.STRIPE_API_HOST || '',
     apiPort: process.env.STRIPE_API_PORT ? int(process.env.STRIPE_API_PORT, 443) : undefined,
