@@ -4,17 +4,13 @@ const email = z.string().trim().toLowerCase().email('Enter a valid email address
 const password = z.string().min(8, 'Password must be at least 8 characters.').max(200)
 
 export const registerSchema = z.object({
-  name: z.string().trim().min(1, 'Your name is required.').max(120).optional(),
-  company: z.string().trim().min(1, 'Company or institution is required.').max(160),
+  name: z.string().trim().min(1, 'Your name is required.').max(120),
+  company: z.string().trim().max(160).optional().or(z.literal('')),
   email,
   password,
   phone: z.string().trim().max(40).optional().or(z.literal('')),
   heardAboutUs: z.string().trim().max(120).optional().or(z.literal('')),
-  researchFramework: z
-    .string()
-    .trim()
-    .min(1, 'Describe your intended evaluation framework.')
-    .max(2000),
+  researchFramework: z.string().trim().max(2000).optional().or(z.literal('')),
 })
 
 export const registerVerifySchema = z.object({

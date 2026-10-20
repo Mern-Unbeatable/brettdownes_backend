@@ -81,9 +81,10 @@ async function finalizeRegistration(pending, res) {
 
 /** Step 1: store pending signup and email a 6-digit OTP. */
 export async function registerStart(req, res) {
-  const { email, password, company, phone, researchFramework, heardAboutUs } = req.body
-  const name = req.body.name?.trim() || company
+  const { email, password, name, company, phone, researchFramework, heardAboutUs } = req.body
   const heard = String(heardAboutUs || '').trim() || null
+  const companyValue = String(company || '').trim() || null
+  const frameworkValue = String(researchFramework || '').trim() || null
 
   const existing = await prisma.user.findUnique({ where: { email } })
   if (existing) {
@@ -99,10 +100,10 @@ export async function registerStart(req, res) {
     create: {
       email,
       passwordHash,
-      name,
-      company,
+      name: name.trim(),
+      company: companyValue,
       phone: phone || null,
-      researchFramework,
+      researchFramework: frameworkValue,
       heardAboutUs: heard,
       otpHash: hash,
       expiresAt,
@@ -110,10 +111,10 @@ export async function registerStart(req, res) {
     },
     update: {
       passwordHash,
-      name,
-      company,
+      name: name.trim(),
+      company: companyValue,
       phone: phone || null,
-      researchFramework,
+      researchFramework: frameworkValue,
       heardAboutUs: heard,
       otpHash: hash,
       expiresAt,
@@ -121,7 +122,7 @@ export async function registerStart(req, res) {
     },
   })
 
-  const mail = templates.registrationOtp(name, raw)
+  const mail = templates.registrationOtp(name.trim(), raw)
   const delivery = await sendMail({ to: email, ...mail })
   if (!delivery.sent && delivery.reason !== 'smtp-not-configured') {
     throw badRequest('Could not send the verification email. Try again shortly.')
