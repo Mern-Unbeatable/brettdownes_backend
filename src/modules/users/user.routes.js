@@ -59,8 +59,9 @@ function serialize(user, extras = {}) {
 function buildUserWhere({ search, status, role }) {
   return {
     deletedAt: null,
+    // Customers admin UI is for storefront members only — not staff accounts.
+    role: role || 'USER',
     ...(status ? { status } : {}),
-    ...(role ? { role } : {}),
     ...(search
       ? {
           OR: [
@@ -194,7 +195,7 @@ router.get('/', validate(listQuerySchema, 'query'), async (req, res) => {
     prisma.user.count({ where }),
     prisma.user.groupBy({
       by: ['status'],
-      where: { deletedAt: null },
+      where: { deletedAt: null, role: 'USER' },
       _count: { _all: true },
     }),
   ])

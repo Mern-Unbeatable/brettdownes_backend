@@ -171,7 +171,7 @@ router.get('/stats', async (req, res) => {
         _count: { _all: true },
       }),
       prisma.user.count({ where: { role: 'USER', deletedAt: null } }),
-      prisma.user.count({ where: { status: 'PENDING', deletedAt: null } }),
+      prisma.user.count({ where: { status: 'PENDING', role: 'USER', deletedAt: null } }),
       prisma.variant.count({ where: { stock: { lte: 5 }, isActive: true } }),
       prisma.order.findMany({
         include: ORDER_INCLUDE,
