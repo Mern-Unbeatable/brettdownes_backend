@@ -88,6 +88,12 @@ const checkoutThrottle = rateLimit({
   message: 'Too many attempts. Please wait a minute and try again.',
 })
 
+/* ---- Public: lock-screen contact links (no password required) ----- */
+router.get('/gate', async (req, res) => {
+  const config = await getWholesaleConfig()
+  res.json({ telegramUrl: config.telegramUrl || '' })
+})
+
 /* ---- Public: unlock + read the price list ------------------------- */
 router.post('/unlock', unlockThrottle, validate(unlockSchema), async (req, res) => {
   const ok = await verifyAccessPassword(req.body.password)
