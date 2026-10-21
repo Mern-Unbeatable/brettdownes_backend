@@ -9,20 +9,42 @@ const BRAND = {
   fog: '#f3f4f6',
 }
 
+const TRUSTPILOT_REVIEW_URL = 'https://www.trustpilot.com/review/peptideopslogistics.com'
+
+function trustpilotReviewBlock() {
+  return (
+    paragraph(
+      'If everything arrived as expected, a quick review on Trustpilot helps other researchers find us.',
+    ) + button(TRUSTPILOT_REVIEW_URL, 'Review us on Trustpilot')
+  )
+}
+
 function layout(title, bodyHtml) {
   return `<!doctype html>
 <html>
-  <body style="margin:0;padding:24px;background:${BRAND.fog};font-family:'Outfit',Helvetica,Arial,sans-serif;color:${BRAND.ink};">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      @media only screen and (max-width: 520px) {
+        .email-shell { padding: 12px !important; }
+        .email-body-pad { padding: 20px 16px !important; }
+        .email-header-pad { padding: 20px 16px !important; }
+        .email-footer-pad { padding: 16px !important; }
+      }
+    </style>
+  </head>
+  <body class="email-shell" style="margin:0;padding:24px;background:${BRAND.fog};font-family:'Outfit',Helvetica,Arial,sans-serif;color:${BRAND.ink};">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:20px;overflow:hidden;">
       <tr>
-        <td style="background:${BRAND.navy};padding:24px 28px;">
+        <td class="email-header-pad" style="background:${BRAND.navy};padding:24px 28px;">
           <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.01em;">Peptide Ops Logistics</p>
           <p style="margin:4px 0 0;color:${BRAND.cyan};font-size:11px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">${title}</p>
         </td>
       </tr>
-      <tr><td style="padding:28px;">${bodyHtml}</td></tr>
+      <tr><td class="email-body-pad" style="padding:28px;">${bodyHtml}</td></tr>
       <tr>
-        <td style="padding:20px 28px;background:${BRAND.fog};color:${BRAND.muted};font-size:11px;line-height:1.6;">
+        <td class="email-footer-pad" style="padding:20px 28px;background:${BRAND.fog};color:${BRAND.muted};font-size:11px;line-height:1.6;">
           For Research Use Only; Not for Human Consumption.<br />
           4472 River Rd N, PMB #1020, Keizer, OR 97303
         </td>
@@ -33,7 +55,13 @@ function layout(title, bodyHtml) {
 }
 
 function button(href, label) {
-  return `<a href="${href}" style="display:inline-block;margin-top:20px;padding:12px 22px;background:${BRAND.cyan};color:${BRAND.navy};border-radius:12px;font-weight:700;font-size:14px;text-decoration:none;">${label}</a>`
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;">
+  <tr>
+    <td align="center" style="padding:0;">
+      <a href="${href}" style="display:block;width:100%;max-width:100%;box-sizing:border-box;padding:14px 18px;background:${BRAND.cyan};color:${BRAND.navy};border-radius:12px;font-weight:700;font-size:14px;line-height:1.35;text-decoration:none;text-align:center;">${label}</a>
+    </td>
+  </tr>
+</table>`
 }
 
 function paragraph(text) {
@@ -226,15 +254,25 @@ export const templates = {
     ),
   }),
 
-  orderStatusChanged: (order) => ({
-    subject: `Order ${order.orderNumber} is now ${order.status.toLowerCase()}`,
-    html: layout(
-      'Order update',
-      paragraph(`Hi ${order.contactName},`) +
-        paragraph(`Your order <strong>${order.orderNumber}</strong> is now marked as <strong>${order.status.toLowerCase()}</strong>.`) +
-        button(`${env.clientUrl}/dashboard/orders`, 'View your orders'),
-    ),
-  }),
+  orderStatusChanged: (order) => {
+    const delivered = order.status === 'DELIVERED'
+    return {
+      subject: delivered
+        ? `Order ${order.orderNumber} has been delivered`
+        : `Order ${order.orderNumber} is now ${order.status.toLowerCase()}`,
+      html: layout(
+        delivered ? 'Delivered' : 'Order update',
+        paragraph(`Hi ${order.contactName},`) +
+          paragraph(
+            delivered
+              ? `Your order <strong>${order.orderNumber}</strong> has been delivered.`
+              : `Your order <strong>${order.orderNumber}</strong> is now marked as <strong>${order.status.toLowerCase()}</strong>.`,
+          ) +
+          (delivered ? trustpilotReviewBlock() : '') +
+          button(`${env.clientUrl}/dashboard/orders`, 'View your orders'),
+      ),
+    }
+  },
 
   storeOrderConfirmation: (order) => ({
     subject: `Order ${order.orderNumber} confirmed`,
@@ -283,16 +321,24 @@ export const templates = {
     ),
   }),
 
-  storeOrderStatusChanged: (order) => ({
-    subject: `Order ${order.orderNumber} is now ${order.status.toLowerCase()}`,
-    html: layout(
-      'Order update',
-      paragraph(`Hi ${order.contactName},`) +
-        paragraph(
-          `Your order <strong>${order.orderNumber}</strong> is now marked as <strong>${order.status.toLowerCase()}</strong>.`,
-        ),
-    ),
-  }),
+  storeOrderStatusChanged: (order) => {
+    const delivered = order.status === 'DELIVERED'
+    return {
+      subject: delivered
+        ? `Order ${order.orderNumber} has been delivered`
+        : `Order ${order.orderNumber} is now ${order.status.toLowerCase()}`,
+      html: layout(
+        delivered ? 'Delivered' : 'Order update',
+        paragraph(`Hi ${order.contactName},`) +
+          paragraph(
+            delivered
+              ? `Your order <strong>${order.orderNumber}</strong> has been delivered.`
+              : `Your order <strong>${order.orderNumber}</strong> is now marked as <strong>${order.status.toLowerCase()}</strong>.`,
+          ) +
+          (delivered ? trustpilotReviewBlock() : ''),
+      ),
+    }
+  },
 
   accountCredit: ({ name, addedCents, balanceCents }) => ({
     subject: `${formatMoney(addedCents)} account credit added`,
