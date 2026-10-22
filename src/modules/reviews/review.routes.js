@@ -276,11 +276,21 @@ adminRouter.get('/', validate(listQuerySchema, 'query'), async (req, res) => {
 adminRouter.post('/:id/approve', async (req, res) => {
   const claim = await prisma.reviewCreditClaim.findUnique({
     where: { id: req.params.id },
-    include: { user: { select: { id: true, name: true, email: true, creditCents: true, deletedAt: true } } },
+    include: {
+      user: { select: { id: true, name: true, email: true, creditCents: true, deletedAt: true } },
+      order: { select: { status: true, paymentStatus: true } },
+    },
   })
   if (!claim) throw notFound('Review request not found.')
   if (claim.status !== 'PENDING') throw badRequest('Only verified requests waiting for review can be approved.')
   if (!claim.user || claim.user.deletedAt) throw badRequest('That customer account is no longer active.')
+  if (
+    !claim.order ||
+    claim.order.status !== 'DELIVERED' ||
+    claim.order.paymentStatus !== 'PAID'
+  ) {
+    throw badRequest('This order is no longer eligible for review credit.')
+  }
 
   const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.reviewCreditClaim.update({

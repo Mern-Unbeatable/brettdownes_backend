@@ -22,6 +22,7 @@ import {
   withParcel,
 } from './new-orders.js'
 import { syncOrderPaymentFromStripe, markOrderPaid } from '../payments/payment.service.js'
+import { revokeReviewCreditForOrder } from '../reviews/review-revoke.js'
 
 const listQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),
@@ -276,6 +277,13 @@ router.patch('/:id/status', validate(statusSchema), async (req, res) => {
       })
       invalidateUserCache(existing.userId)
     }
+
+    await revokeReviewCreditForOrder(existing.id, {
+      reason:
+        status === 'REFUNDED'
+          ? 'Order was refunded — review credit for this order was removed.'
+          : 'Order was cancelled — review credit for this order was removed.',
+    })
   }
 
   if (notifyCustomer) {
@@ -461,6 +469,10 @@ router.delete('/:id', async (req, res) => {
     })
     invalidateUserCache(existing.userId)
   }
+
+  await revokeReviewCreditForOrder(existing.id, {
+    reason: 'Order was deleted — review credit for this order was removed.',
+  })
 
   await prisma.order.delete({ where: { id: existing.id } })
   res.status(204).end()
