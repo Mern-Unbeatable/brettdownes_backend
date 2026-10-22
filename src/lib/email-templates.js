@@ -11,11 +11,33 @@ const BRAND = {
 
 const TRUSTPILOT_REVIEW_URL = 'https://www.trustpilot.com/review/peptideopslogistics.com'
 
+function points(title, items) {
+  const rows = items
+    .map(
+      (item) => `<tr>
+        <td valign="top" width="16" style="padding:0 0 8px;font-size:16px;line-height:1.4;color:${BRAND.navy};">•</td>
+        <td style="padding:0 0 8px;font-size:14px;line-height:1.5;color:${BRAND.ink};">${item}</td>
+      </tr>`,
+    )
+    .join('')
+  return `<p style="margin:4px 0 8px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:${BRAND.muted};">${title}</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 4px;">${rows}</table>`
+}
+
 function trustpilotReviewBlock() {
   return (
     paragraph(
-      'If everything arrived as expected, a quick review on Trustpilot helps other researchers find us.',
-    ) + button(TRUSTPILOT_REVIEW_URL, 'Review us on Trustpilot')
+      'If you\'re satisfied with your order, we\'d appreciate an honest review on Trustpilot. It only takes a minute.',
+    ) +
+    points('What you get', [
+      '<strong>$5 account credit</strong> after we verify your review',
+      'Use it on any product at checkout',
+    ]) +
+    paragraph(
+      'After you post on Trustpilot, open <strong>Review credit</strong> in your dashboard and confirm the code we email you.',
+    ) +
+    button(TRUSTPILOT_REVIEW_URL, 'Review us on Trustpilot') +
+    button(`${env.clientUrl}/dashboard/reviews`, 'Claim $5 review credit')
   )
 }
 
@@ -268,8 +290,9 @@ export const templates = {
               ? `Your order <strong>${order.orderNumber}</strong> has been delivered.`
               : `Your order <strong>${order.orderNumber}</strong> is now marked as <strong>${order.status.toLowerCase()}</strong>.`,
           ) +
-          (delivered ? trustpilotReviewBlock() : '') +
-          button(`${env.clientUrl}/dashboard/orders`, 'View your orders'),
+          (delivered
+            ? trustpilotReviewBlock()
+            : button(`${env.clientUrl}/dashboard/orders`, 'View your orders')),
       ),
     }
   },
@@ -339,6 +362,39 @@ export const templates = {
       ),
     }
   },
+
+  reviewOtp: ({ name, code }) => ({
+    subject: 'Your Peptide Ops review credit code',
+    html: layout(
+      'Review credit',
+      paragraph(`Hi ${name},`) +
+        paragraph(
+          'Use this code to confirm the email you used for your Trustpilot review. It expires in 10 minutes.',
+        ) +
+        paragraph(
+          `<span style="display:inline-block;letter-spacing:0.35em;font-size:22px;font-weight:700;">${code}</span>`,
+        ) +
+        paragraph(
+          `<span style="color:${BRAND.muted};font-size:12px;">If you did not request this, you can ignore this email.</span>`,
+        ),
+    ),
+  }),
+
+  reviewCreditAdded: ({ name, addedCents, balanceCents, orderNumber }) => ({
+    subject: `${formatMoney(addedCents)} review credit added`,
+    html: layout(
+      'Review credit',
+      paragraph(`Hi ${name},`) +
+        paragraph(
+          `Your Trustpilot review${orderNumber ? ` for order <strong>${orderNumber}</strong>` : ''} was approved.`,
+        ) +
+        points('What you get', [
+          `<strong>${formatMoney(addedCents)}</strong> account credit`,
+          'Use it on any product at checkout',
+        ]) +
+        button(`${env.clientUrl}/shop`, 'Shop products'),
+    ),
+  }),
 
   accountCredit: ({ name, addedCents, balanceCents }) => ({
     subject: `${formatMoney(addedCents)} account credit added`,

@@ -43,6 +43,13 @@ enum Fulfillment {
   PICKUP
 }
 
+enum ReviewClaimStatus {
+  AWAITING_OTP
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model User {
   id                String     @id @default(uuid())
   email             String     @unique
@@ -62,11 +69,12 @@ model User {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
-  addresses   Address[]
-  cartItems   CartItem[]
-  orders      Order[]
-  resetTokens PasswordResetToken[]
-  orderEvents OrderEvent[]
+  addresses    Address[]
+  cartItems    CartItem[]
+  orders       Order[]
+  resetTokens  PasswordResetToken[]
+  orderEvents  OrderEvent[]
+  reviewClaims ReviewCreditClaim[]
 
   @@index([status])
   @@index([role])
@@ -221,9 +229,10 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user   User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
-  items  OrderItem[]
-  events OrderEvent[]
+  user        User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items       OrderItem[]
+  events      OrderEvent[]
+  reviewClaim ReviewCreditClaim?
 
   @@index([userId])
   @@index([status])
@@ -442,6 +451,32 @@ model WholesaleOrderItem {
   order WholesaleOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
+}
+
+/// $5 Trustpilot review reward. One claim per delivered shop order.
+model ReviewCreditClaim {
+  id              String            @id @default(uuid())
+  userId          String
+  orderId         String            @unique
+  orderNumber     String
+  reviewEmail     String
+  otpHash         String?
+  otpExpiresAt    DateTime?
+  otpAttempts     Int               @default(0)
+  emailVerifiedAt DateTime?
+  status          ReviewClaimStatus @default(AWAITING_OTP)
+  creditCents     Int               @default(500)
+  rejectReason    String?
+  reviewedAt      DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 /// Pre-account signup waiting on email OTP verification.

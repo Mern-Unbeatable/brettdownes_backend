@@ -18,6 +18,7 @@ export const ORDER_INCLUDE = {
 /** List views only need line items — skips events/user and saves a remote DB RTT. */
 export const ORDER_LIST_INCLUDE = {
   items: { include: ORDER_ITEM_INCLUDE },
+  reviewClaim: { select: { status: true } },
 }
 
 /** Prefer live variant/product image so re-uploads still show; snapshot is last resort. */
@@ -93,6 +94,7 @@ export function serializeOrder(order) {
     shippedAt: order.shippedAt,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
+    reviewClaimStatus: order.reviewClaim?.status || null,
 
     customer: order.user
       ? { id: order.user.id, name: order.user.name, email: order.user.email, company: order.user.company }
