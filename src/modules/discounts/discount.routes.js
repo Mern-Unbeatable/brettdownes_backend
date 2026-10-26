@@ -9,6 +9,7 @@ import {
   calculateCouponDiscount,
   getActiveBogoPromotions,
   getActiveDiscountTiers,
+  listAllBogoPromotions,
   serializeBogoPromotion,
   serializeDiscountTier,
 } from '../orders/discount.service.js'
@@ -102,10 +103,7 @@ router.get('/admin', async (req, res) => {
       include: { products: { select: { productId: true } } },
       orderBy: { createdAt: 'desc' },
     }),
-    prisma.bogoPromotion.findMany({
-      include: { products: { select: { productId: true } } },
-      orderBy: { createdAt: 'desc' },
-    }),
+    listAllBogoPromotions(),
   ])
   res.json({
     tiers: tiers.map(serializeDiscountTier),

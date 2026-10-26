@@ -159,13 +159,39 @@ export function calculateBogoDiscountForProducts(items, productIds, label = 'BOG
   return { discountCents, discountLabel: label }
 }
 
+function isMissingBogoTable(error) {
+  const code = error?.code
+  const message = String(error?.message || '')
+  return code === 'P2021' || /BogoPromotion/i.test(message)
+}
+
+export async function listAllBogoPromotions() {
+  try {
+    return await prisma.bogoPromotion.findMany({
+      include: { products: { select: { productId: true } } },
+      orderBy: { createdAt: 'desc' },
+    })
+  } catch (error) {
+    if (isMissingBogoTable(error)) {
+      console.warn('[discounts] BogoPromotion table missing — run prisma migrate deploy')
+      return []
+    }
+    throw error
+  }
+}
+
 export async function getActiveBogoPromotions(now = new Date()) {
-  const promos = await prisma.bogoPromotion.findMany({
-    where: { enabled: true },
-    include: { products: { select: { productId: true } } },
-    orderBy: { createdAt: 'asc' },
-  })
-  return promos.filter((promo) => isPromotionActive(promo, now))
+  try {
+    const promos = await prisma.bogoPromotion.findMany({
+      where: { enabled: true },
+      include: { products: { select: { productId: true } } },
+      orderBy: { createdAt: 'asc' },
+    })
+    return promos.filter((promo) => isPromotionActive(promo, now))
+  } catch (error) {
+    if (isMissingBogoTable(error)) return []
+    throw error
+  }
 }
 
 export function serializeBogoPromotion(promotion) {
