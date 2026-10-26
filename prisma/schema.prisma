@@ -120,6 +120,7 @@ model Product {
 
   variants Variant[]
   couponProducts CouponProduct[]
+  bogoPromotionProducts BogoPromotionProduct[]
   coaDocuments CoaDocument[]
 
   @@index([isActive])
@@ -282,6 +283,32 @@ model CouponProduct {
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@id([couponId, productId])
+  @@index([productId])
+}
+
+/// Buy-one-get-one-free style promos (auto-applied at checkout, no code).
+model BogoPromotion {
+  id        String    @id @default(uuid())
+  name      String
+  enabled   Boolean   @default(true)
+  startsAt  DateTime?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  products BogoPromotionProduct[]
+
+  @@index([enabled])
+}
+
+model BogoPromotionProduct {
+  promotionId String
+  productId   String
+
+  promotion BogoPromotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([promotionId, productId])
   @@index([productId])
 }
 

@@ -7,7 +7,9 @@ import { validate } from '../../middleware/validate.js'
 import { resolveCart } from '../orders/cart.service.js'
 import {
   calculateCouponDiscount,
+  getActiveBogoPromotions,
   getActiveDiscountTiers,
+  serializeBogoPromotion,
   serializeDiscountTier,
 } from '../orders/discount.service.js'
 
@@ -50,6 +52,20 @@ const validateCouponSchema = z.object({
   items: z.array(z.object({ variantId: z.string().min(1), qty: z.coerce.number().int().min(1) })).min(1),
 })
 
+const bogoSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    enabled: z.boolean().default(true),
+    productIds: z.array(z.string().uuid()).min(1).max(500),
+    startsAt: z.coerce.date().nullable().optional(),
+    expiresAt: z.coerce.date().nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.startsAt && value.expiresAt && value.expiresAt <= value.startsAt) {
+      ctx.addIssue({ code: 'custom', path: ['expiresAt'], message: 'End date must be after start date.' })
+    }
+  })
+
 function serializeCoupon(coupon) {
   return {
     ...coupon,
@@ -61,8 +77,14 @@ function serializeCoupon(coupon) {
 const router = Router()
 
 router.get('/public', requireAuth, async (req, res) => {
-  const tiers = await getActiveDiscountTiers()
-  res.json({ tiers: tiers.map(serializeDiscountTier) })
+  const [tiers, bogoPromotions] = await Promise.all([
+    getActiveDiscountTiers(),
+    getActiveBogoPromotions(),
+  ])
+  res.json({
+    tiers: tiers.map(serializeDiscountTier),
+    bogoPromotions: bogoPromotions.map(serializeBogoPromotion),
+  })
 })
 
 router.post('/validate-coupon', requireAuth, validate(validateCouponSchema), async (req, res) => {
@@ -74,14 +96,22 @@ router.post('/validate-coupon', requireAuth, validate(validateCouponSchema), asy
 router.use('/admin', requireAdmin)
 
 router.get('/admin', async (req, res) => {
-  const [tiers, coupons] = await Promise.all([
+  const [tiers, coupons, bogoPromotions] = await Promise.all([
     prisma.discountTier.findMany({ orderBy: [{ minSubtotalCents: 'asc' }, { createdAt: 'asc' }] }),
     prisma.coupon.findMany({
       include: { products: { select: { productId: true } } },
       orderBy: { createdAt: 'desc' },
     }),
+    prisma.bogoPromotion.findMany({
+      include: { products: { select: { productId: true } } },
+      orderBy: { createdAt: 'desc' },
+    }),
   ])
-  res.json({ tiers: tiers.map(serializeDiscountTier), coupons: coupons.map(serializeCoupon) })
+  res.json({
+    tiers: tiers.map(serializeDiscountTier),
+    coupons: coupons.map(serializeCoupon),
+    bogoPromotions: bogoPromotions.map(serializeBogoPromotion),
+  })
 })
 
 router.post('/admin/tiers', validate(tierSchema), async (req, res) => {
@@ -146,6 +176,43 @@ router.delete('/admin/coupons/:id', async (req, res) => {
   const existing = await prisma.coupon.findUnique({ where: { id: req.params.id } })
   if (!existing) throw notFound('Coupon not found.')
   await prisma.coupon.delete({ where: { id: existing.id } })
+  res.json({ ok: true })
+})
+
+router.post('/admin/bogo', validate(bogoSchema), async (req, res) => {
+  const { productIds, ...rest } = req.body
+  const promotion = await prisma.bogoPromotion.create({
+    data: {
+      ...rest,
+      products: { create: productIds.map((productId) => ({ productId })) },
+    },
+    include: { products: { select: { productId: true } } },
+  })
+  res.status(201).json({ promotion: serializeBogoPromotion(promotion) })
+})
+
+router.patch('/admin/bogo/:id', validate(bogoSchema), async (req, res) => {
+  const existing = await prisma.bogoPromotion.findUnique({ where: { id: req.params.id } })
+  if (!existing) throw notFound('BOGO promotion not found.')
+  const { productIds, ...rest } = req.body
+  const promotion = await prisma.bogoPromotion.update({
+    where: { id: existing.id },
+    data: {
+      ...rest,
+      products: {
+        deleteMany: {},
+        create: productIds.map((productId) => ({ productId })),
+      },
+    },
+    include: { products: { select: { productId: true } } },
+  })
+  res.json({ promotion: serializeBogoPromotion(promotion) })
+})
+
+router.delete('/admin/bogo/:id', async (req, res) => {
+  const existing = await prisma.bogoPromotion.findUnique({ where: { id: req.params.id } })
+  if (!existing) throw notFound('BOGO promotion not found.')
+  await prisma.bogoPromotion.delete({ where: { id: existing.id } })
   res.json({ ok: true })
 })
 

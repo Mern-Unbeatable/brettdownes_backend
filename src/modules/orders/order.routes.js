@@ -12,7 +12,9 @@ import { removePurchasedCartItems } from '../cart/cart.service.js'
 import { nextOrderNumber, resolveCart } from './cart.service.js'
 import {
   calculateBulkDiscount,
+  calculateBogoDiscount,
   calculateCouponDiscount,
+  pickAutomaticDiscount,
   getActiveDiscountTiers,
 } from './discount.service.js'
 import { deductOrderStock, restoreOrderStock } from './inventory.service.js'
@@ -123,14 +125,16 @@ router.post('/', validate(createOrderSchema), async (req, res) => {
     ...tier,
     detail: tier.name,
   })))
+  const bogoDiscount = await calculateBogoDiscount(items)
+  const autoDiscount = pickAutomaticDiscount(bulkDiscount, bogoDiscount)
   const couponDiscount = body.couponCode
     ? await calculateCouponDiscount(items, body.couponCode)
     : null
   const discountCents = Math.min(
     subtotalCents,
-    bulkDiscount.discountCents + (couponDiscount?.discountCents || 0),
+    autoDiscount.discountCents + (couponDiscount?.discountCents || 0),
   )
-  const discountLabel = [bulkDiscount.discountLabel, couponDiscount?.discountLabel]
+  const discountLabel = [autoDiscount.discountLabel, couponDiscount?.discountLabel]
     .filter(Boolean)
     .join(' + ') || null
 

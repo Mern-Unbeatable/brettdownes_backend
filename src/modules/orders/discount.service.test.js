@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { calculateBulkDiscount } from './discount.service.js'
+import {
+  calculateBogoDiscountForProducts,
+  calculateBulkDiscount,
+  pickAutomaticDiscount,
+} from './discount.service.js'
 
 const tiers = [
   {
@@ -140,4 +144,29 @@ test('applies kit reward to Blends category', () => {
   )
   assert.equal(result.discountCents, 2_500)
   assert.equal(result.tierId, 'kits')
+})
+
+test('bogo pairs highest unit price and discounts the lower unit', () => {
+  const items = [
+    { productId: 'ghk', unitPriceCents: 3000, qty: 1 },
+    { productId: 'ghk', unitPriceCents: 2000, qty: 1 },
+  ]
+  const result = calculateBogoDiscountForProducts(items, ['ghk'], 'GHK BOGO')
+  assert.equal(result.discountCents, 2000)
+})
+
+test('bogo ignores odd leftover unit', () => {
+  const result = calculateBogoDiscountForProducts(
+    [{ productId: 'ghk', unitPriceCents: 2500, qty: 3 }],
+    ['ghk'],
+  )
+  assert.equal(result.discountCents, 2500)
+})
+
+test('pickAutomaticDiscount chooses the larger automatic reward', () => {
+  const picked = pickAutomaticDiscount(
+    { discountCents: 500, discountLabel: 'Bulk' },
+    { discountCents: 2000, discountLabel: 'BOGO' },
+  )
+  assert.equal(picked.discountCents, 2000)
 })

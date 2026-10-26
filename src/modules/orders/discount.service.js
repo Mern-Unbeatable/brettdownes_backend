@@ -122,3 +122,87 @@ export function calculateBulkDiscount(items, tiers = []) {
 
   return best
 }
+
+function isPromotionActive(promotion, now = new Date()) {
+  if (!promotion?.enabled) return false
+  if (promotion.startsAt && promotion.startsAt > now) return false
+  if (promotion.expiresAt && promotion.expiresAt < now) return false
+  return true
+}
+
+/**
+ * Pair eligible units highest-to-lowest; the cheaper item in each pair is free
+ * (mix & match across selected products).
+ */
+export function calculateBogoDiscountForProducts(items, productIds, label = 'BOGO') {
+  const idSet = productIds instanceof Set ? productIds : new Set(productIds || [])
+  if (!idSet.size) return { discountCents: 0, discountLabel: null }
+
+  const units = []
+  for (const item of items || []) {
+    if (!idSet.has(item.productId)) continue
+    const unitPriceCents = Number(item.unitPriceCents)
+    if (!Number.isFinite(unitPriceCents) || unitPriceCents <= 0) continue
+    for (let i = 0; i < Number(item.qty) || 0; i += 1) {
+      units.push(unitPriceCents)
+    }
+  }
+
+  if (units.length < 2) return { discountCents: 0, discountLabel: null }
+
+  units.sort((a, b) => b - a)
+  let discountCents = 0
+  for (let i = 1; i < units.length; i += 2) {
+    discountCents += units[i]
+  }
+
+  return { discountCents, discountLabel: label }
+}
+
+export async function getActiveBogoPromotions(now = new Date()) {
+  const promos = await prisma.bogoPromotion.findMany({
+    where: { enabled: true },
+    include: { products: { select: { productId: true } } },
+    orderBy: { createdAt: 'asc' },
+  })
+  return promos.filter((promo) => isPromotionActive(promo, now))
+}
+
+export function serializeBogoPromotion(promotion) {
+  return {
+    id: promotion.id,
+    name: promotion.name,
+    enabled: promotion.enabled,
+    startsAt: promotion.startsAt,
+    expiresAt: promotion.expiresAt,
+    productIds: (promotion.products || []).map((entry) => entry.productId),
+  }
+}
+
+export async function calculateBogoDiscount(items, now = new Date()) {
+  const promos = await getActiveBogoPromotions(now)
+  let discountCents = 0
+  const labels = []
+
+  for (const promo of promos) {
+    const productIds = promo.products.map((entry) => entry.productId)
+    const result = calculateBogoDiscountForProducts(items, productIds, promo.name)
+    if (result.discountCents > 0) {
+      discountCents += result.discountCents
+      labels.push(result.discountLabel)
+    }
+  }
+
+  return {
+    discountCents,
+    discountLabel: labels.length ? labels.join(' + ') : null,
+  }
+}
+
+/** Largest automatic discount wins (bulk tier vs BOGO). Coupons may still stack. */
+export function pickAutomaticDiscount(bulkDiscount, bogoDiscount) {
+  const bulk = bulkDiscount?.discountCents || 0
+  const bogo = bogoDiscount?.discountCents || 0
+  if (bogo > bulk) return bogoDiscount
+  return bulkDiscount
+}
