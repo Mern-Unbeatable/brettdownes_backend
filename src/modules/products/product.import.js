@@ -195,7 +195,7 @@ export async function buildInventoryTemplate() {
     ['1. Keep one row per dose. BPC-157 5mg and BPC-157 10mg are separate rows.'],
     ['2. Do not add extra header rows above Item name / Item barcode / Quantity.'],
     ['3. Leave Item barcode exactly as exported. That is how the site finds the product.'],
-    ['4. Upload the saved .xlsx from Admin → Products → Import Excel.'],
+    ['4. Export inventory from Admin → Products, edit Quantity, then Import Excel.'],
     ['5. Unknown barcodes are listed in the upload result. Prices, photos, and descriptions stay the same.'],
     ['6. Do not use the old SKU template (PO-BPC-5). The site matches Item barcode only (bpc5, mot10, etc.).'],
   ]

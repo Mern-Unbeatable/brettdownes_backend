@@ -198,7 +198,7 @@ export async function buildWholesaleInventoryTemplate() {
     ['Rules'],
     ['1. Do not add extra header rows above Item name / Item barcode / Quantity.'],
     ['2. Leave Item barcode exactly as exported. That is how the site finds the product.'],
-    ['3. Upload the saved .xlsx from Admin → Secret page → Import Excel.'],
+    ['3. Export inventory from Admin → Secret page, edit Quantity, then Import Excel.'],
     ['4. Unknown barcodes are listed in the upload result. Prices and names stay the same.'],
     ['5. Quantity 0 marks the item out of stock on /other. Customers cannot order more than this count.'],
   ]

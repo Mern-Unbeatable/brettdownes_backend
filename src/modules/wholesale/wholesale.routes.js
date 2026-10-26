@@ -256,7 +256,7 @@ router.delete('/admin/products/:id', requireAdmin, async (req, res) => {
   res.json(result)
 })
 
-router.get('/admin/import/template', requireAdmin, async (req, res) => {
+async function sendWholesaleInventoryExport(res) {
   const buffer = await buildWholesaleInventoryTemplate()
   res.setHeader(
     'Content-Type',
@@ -264,7 +264,11 @@ router.get('/admin/import/template', requireAdmin, async (req, res) => {
   )
   res.setHeader('Content-Disposition', 'attachment; filename="peptide-ops-other-inventory.xlsx"')
   res.send(buffer)
-})
+}
+
+router.get('/admin/import/export', requireAdmin, (req, res) => sendWholesaleInventoryExport(res))
+/** @deprecated use /admin/import/export — same live inventory spreadsheet */
+router.get('/admin/import/template', requireAdmin, (req, res) => sendWholesaleInventoryExport(res))
 
 router.post('/admin/import', requireAdmin, (req, res, next) => {
   spreadsheetUpload.single('file')(req, res, async (err) => {

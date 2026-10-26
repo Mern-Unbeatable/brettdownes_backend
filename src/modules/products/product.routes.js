@@ -34,7 +34,7 @@ const spreadsheetUpload = multer({
 // Full catalogue stays behind the portal; homepage featured teaser is public (glass-locked in UI).
 router.get('/', requireAuth, validate(productQuerySchema, 'query'), controller.listProducts)
 router.get('/featured', controller.listFeaturedProducts)
-router.get('/import/template', requireAdmin, async (req, res) => {
+async function sendInventoryExport(res) {
   const buffer = await buildInventoryTemplate()
   res.setHeader(
     'Content-Type',
@@ -42,7 +42,11 @@ router.get('/import/template', requireAdmin, async (req, res) => {
   )
   res.setHeader('Content-Disposition', 'attachment; filename="peptide-ops-inventory.xlsx"')
   res.send(buffer)
-})
+}
+
+router.get('/import/export', requireAdmin, (req, res) => sendInventoryExport(res))
+/** @deprecated use /import/export — same live inventory spreadsheet */
+router.get('/import/template', requireAdmin, (req, res) => sendInventoryExport(res))
 router.post('/', requireAdmin, validate(productCreateSchema), controller.createProduct)
 
 router.post('/import', requireAdmin, (req, res, next) => {
