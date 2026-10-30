@@ -9,8 +9,6 @@ const BRAND = {
   fog: '#f3f4f6',
 }
 
-const TRUSTPILOT_REVIEW_URL = 'https://www.trustpilot.com/review/peptideopslogistics.com'
-
 function points(title, items) {
   const rows = items
     .map(
@@ -22,23 +20,6 @@ function points(title, items) {
     .join('')
   return `<p style="margin:4px 0 8px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:${BRAND.muted};">${title}</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 4px;">${rows}</table>`
-}
-
-function trustpilotReviewBlock() {
-  return (
-    paragraph(
-      'If you\'re satisfied with your order, we\'d appreciate an honest review on Trustpilot. It only takes a minute.',
-    ) +
-    points('What you get', [
-      '<strong>$5 account credit</strong> after we verify your review',
-      'Use it on any product at checkout',
-    ]) +
-    paragraph(
-      'After you post on Trustpilot, open <strong>Review credit</strong> in your dashboard and confirm the code we email you.',
-    ) +
-    button(TRUSTPILOT_REVIEW_URL, 'Review us on Trustpilot') +
-    button(`${env.clientUrl}/dashboard/reviews`, 'Claim $5 review credit')
-  )
 }
 
 function layout(title, bodyHtml) {
@@ -290,9 +271,7 @@ export const templates = {
               ? `Your order <strong>${order.orderNumber}</strong> has been delivered.`
               : `Your order <strong>${order.orderNumber}</strong> is now marked as <strong>${order.status.toLowerCase()}</strong>.`,
           ) +
-          (delivered
-            ? trustpilotReviewBlock()
-            : button(`${env.clientUrl}/dashboard/orders`, 'View your orders')),
+          button(`${env.clientUrl}/dashboard/orders`, 'View your orders'),
       ),
     }
   },
@@ -358,7 +337,7 @@ export const templates = {
               ? `Your order <strong>${order.orderNumber}</strong> has been delivered.`
               : `Your order <strong>${order.orderNumber}</strong> is now marked as <strong>${order.status.toLowerCase()}</strong>.`,
           ) +
-          (delivered ? trustpilotReviewBlock() : ''),
+          (delivered ? button(`${env.clientUrl}/dashboard/orders`, 'View your orders') : ''),
       ),
     }
   },
