@@ -257,6 +257,7 @@ export const templates = {
     ),
   }),
 
+  // Delivered emails: no Trustpilot / review-credit CTA (users claim from dashboard when enabled).
   orderStatusChanged: (order) => {
     const delivered = order.status === 'DELIVERED'
     return {
@@ -323,6 +324,7 @@ export const templates = {
     ),
   }),
 
+  // Delivered emails: no Trustpilot / review-credit CTA.
   storeOrderStatusChanged: (order) => {
     const delivered = order.status === 'DELIVERED'
     return {

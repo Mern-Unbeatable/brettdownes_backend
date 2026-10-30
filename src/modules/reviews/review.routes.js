@@ -8,6 +8,7 @@ import { rateLimit } from '../../middleware/rate-limit.js'
 import { sendMail } from '../../lib/mailer.js'
 import { templates } from '../../lib/email-templates.js'
 import { createSignupOtp, hashSignupOtp } from '../../lib/tokens.js'
+import { REVIEW_CREDIT_ENABLED } from '../../config/reviewCredit.js'
 
 const REWARD_CENTS = 500
 const OTP_TTL_MS = 1000 * 60 * 10
@@ -76,7 +77,15 @@ async function ownedDeliveredOrder(userId, orderId) {
   return order
 }
 
+function requireReviewCreditEnabled(_req, res, next) {
+  if (!REVIEW_CREDIT_ENABLED) {
+    return res.status(503).json({ message: 'Review credit is temporarily unavailable.' })
+  }
+  next()
+}
+
 const userRouter = Router()
+userRouter.use(requireReviewCreditEnabled)
 userRouter.use(requireAuth)
 
 userRouter.get('/mine', validate(mineQuerySchema, 'query'), async (req, res) => {
@@ -218,6 +227,7 @@ userRouter.post('/verify', otpThrottle, validate(verifySchema), async (req, res)
 })
 
 const adminRouter = Router()
+adminRouter.use(requireReviewCreditEnabled)
 adminRouter.use(requireAdmin)
 
 adminRouter.get('/count', async (req, res) => {
